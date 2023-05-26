@@ -239,6 +239,13 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		bh: core::BlockHeader,
 		peer_info: &PeerInfo,
 	) -> Result<bool, chain::Error> {
+		let local_height = self.chain().head()?.height;
+		let buffer_height = local_height + 50;
+
+		if (bh.height >= buffer_height) {
+			return Ok(true);
+		}
+
 		// No need to process this header if we have previously accepted the _full block_.
 		if self.chain().block_exists(bh.hash())? {
 			return Ok(true);
@@ -254,16 +261,21 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		let res = self.chain().process_block_header(&bh, chain::Options::NONE);
 
 		if let Err(e) = res {
-			debug!(
-				"Block header {} refused by chain: {:?}",
+			warn!(
+				"Height({:?}), Block header {}, prevblock hash {}, Received from peer ({:?})\nRefused by chain: {:?}",
+				bh.height,
 				bh.hash(),
+				bh.prev_hash,
+				peer_info.addr,
 				e.kind()
 			);
 			if e.is_bad_data() {
+				debug!(" >>> e.is_bad_data() triggered!");
 				return Ok(false);
 			} else {
 				// we got an error when trying to process the block header
 				// but nothing serious enough to need to ban the peer upstream
+				debug!(">>> harmless error, peer should not be banned");
 				return Err(e);
 			}
 		}

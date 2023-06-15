@@ -285,10 +285,33 @@ impl<'a> Batch<'a> {
 	pub fn save_block_header(&self, header: &BlockHeader) -> Result<(), Error> {
 		let hash = header.hash();
 
+		let start_time = chrono::Utc::now().timestamp();
 		// Store the header itself indexed by hash.
 		self.db
 			.put_ser(&to_key(BLOCK_HEADER_PREFIX, &mut hash.to_vec())[..], header)?;
 
+		let now = chrono::Utc::now().timestamp();
+		warn!(
+			"After DB operation in save_block_header, time_diff({})",
+			(now - start_time)
+		);
+		Ok(())
+	}
+
+	/// Save block header to db.
+	pub fn save_block_headers(&self, headers: &[BlockHeader]) -> Result<(), Error> {
+		let start_time = chrono::Utc::now().timestamp();
+		// Store the header itself indexed by hash.
+		for header in headers {
+			let hash = header.hash();
+			self.db
+				.put_ser(&to_key(BLOCK_HEADER_PREFIX, &mut hash.to_vec())[..], header)?;
+		}
+		let now = chrono::Utc::now().timestamp();
+		warn!(
+			"After DB operation in save_block_headers, time_diff({})",
+			(now - start_time)
+		);
 		Ok(())
 	}
 

@@ -203,10 +203,20 @@ pub fn sync_block_headers(
 
 	// Validate each header in the chunk and add to our db.
 	// Note: This batch may be rolled back later if the MMR does not validate successfully.
-	for header in headers {
-		validate_header(header, ctx)?;
-		add_block_header(header, &ctx.batch)?;
-	}
+	let start_time = Utc::now().timestamp();
+	warn!(">>>> headers count = {}", headers.len());
+	validate_headers(headers, ctx)?;
+	let mut now = Utc::now().timestamp();
+	warn!(
+		"<<<< pipe:sync_headers: after validate_headers, timediff({})",
+		(now - start_time)
+	);
+	add_block_headers(headers, &ctx.batch)?;
+	now = Utc::now().timestamp();
+	warn!(
+		"<<<< pipe:sync_headers: after add_block_headers, timediff({})",
+		(now - start_time)
+	);
 
 	// Now apply this entire chunk of headers to the sync MMR (ctx is sync MMR specific).
 	txhashset::header_extending(
@@ -214,7 +224,17 @@ pub fn sync_block_headers(
 		&sync_head,
 		&mut ctx.batch,
 		|ext, batch| {
+			let mut now = Utc::now().timestamp();
+			warn!(
+				"<<<< pipe:sync_headers: before rewind_and_apply, timediff({})",
+				(now - start_time)
+			);
 			rewind_and_apply_header_fork(&last_header, ext, batch)?;
+			now = Utc::now().timestamp();
+			warn!(
+				"<<<< pipe:sync_headers: after rewind_and_apply, timediff({})",
+				(now - start_time)
+			);
 			Ok(())
 		},
 	)?;
@@ -341,6 +361,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::InvalidBlockVersion(header.version).into());
 	}
 
+	warn!(">>> validate_header, breakpoint 1");
 	// TODO: remove CI check from here somehow
 	if header.timestamp > Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
 		&& !global::is_automated_testing_mode()
@@ -352,6 +373,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 
 	check_bad_header(header)?;
 
+	warn!(">>> validate_header, breakpoint 2");
 	if !ctx.opts.contains(Options::SKIP_POW) {
 		if !header.pow.is_primary() && !header.pow.is_secondary() {
 			return Err(ErrorKind::LowEdgebits.into());
@@ -380,6 +402,8 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 			return Err(ErrorKind::InvalidPow.into());
 		}
 	}
+
+	warn!(">>> validate_header, breakpoint 3");
 
 	// First I/O cost, delayed as late as possible.
 	let prev = prev_header_store(header, &mut ctx.batch)?;
@@ -421,6 +445,8 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	} else {
 		return Err(ErrorKind::ThereIsNotPolicy.into());
 	}
+
+	warn!(">>> validate_header, breakpoint 4");
 
 	// make sure this header has a height exactly one higher than the previous
 	// header
@@ -485,6 +511,188 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 			}
 		}
 	}
+	warn!(">>> validate_header, breakpoint 5");
+
+	Ok(())
+}
+
+/// First level of block validation that only needs to act on the block header
+/// to make it as cheap as possible. The different validations are also
+/// arranged by order of cost to have as little DoS surface as possible.
+fn validate_headers(headers: &[BlockHeader], ctx: &mut BlockContext<'_>) -> Result<(), Error> {
+	let mut iter = 0;
+	for header in headers {
+		// check version, enforces scheduled hard fork
+		if !consensus::valid_header_version(header.height, header.version) {
+			error!(
+				"Invalid block header version received ({:?}), maybe update Epic?",
+				header.version
+			);
+			return Err(ErrorKind::InvalidBlockVersion(header.version).into());
+		}
+
+		warn!(">>> validate_headers, breakpoint 1");
+		// TODO: remove CI check from here somehow
+		if header.timestamp
+			> Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
+			&& !global::is_automated_testing_mode()
+		{
+			// refuse blocks more than 12 blocks intervals in future (as in bitcoin)
+			// TODO add warning in p2p code if local time is too different from peers
+			return Err(ErrorKind::InvalidBlockTime.into());
+		}
+
+		check_bad_header(header)?;
+
+		warn!(">>> validate_headers, breakpoint 2");
+		if !ctx.opts.contains(Options::SKIP_POW) {
+			if !header.pow.is_primary() && !header.pow.is_secondary() {
+				return Err(ErrorKind::LowEdgebits.into());
+			}
+
+			let edge_bits = header.pow.edge_bits();
+			if !(ctx.pow_verifier)(header).is_ok() {
+				match header.pow.proof {
+					pow::Proof::RandomXProof { ref hash } => {
+						error!("pipe: error validating header with randomx hash {:?}", hash);
+					}
+					pow::Proof::ProgPowProof { ref mix } => {
+						error!(
+							"pipe: error validating header with progpow mix hash {:?}",
+							mix
+						);
+					}
+					_ => {
+						error!(
+							"pipe: error validating header with cuckoo edge_bits {}",
+							edge_bits
+						);
+					}
+				};
+
+				return Err(ErrorKind::InvalidPow.into());
+			}
+		}
+
+		warn!(">>> validate_headers, breakpoint 3");
+
+		// First I/O cost, delayed as late as possible.
+		let mut prev = BlockHeader {
+			..Default::default()
+		};
+		if iter < 1 {
+			prev = prev_header_store(header, &mut ctx.batch)?;
+		} else {
+			prev = headers[iter - 1].clone();
+		}
+		warn!(">>> iter({}), validate_headers prev({:?})", iter, prev);
+		/*let header_seed =
+			seed_header_store(&header.pow.seed, &mut ctx.batch).map_err(|_| ErrorKind::InvalidSeed)?;
+
+		if header_seed.height != pow::randomx::rx_current_seed_height(header.height) {
+			return Err(ErrorKind::InvalidSeed.into());
+		}
+
+		if !is_allowed_policy(global::get_allowed_policies(), header.height, header.policy) {
+			return Err(ErrorKind::PolicyIsNotAllowed.into());
+		}
+
+		if let Some(p) = global::get_policies(header.policy) {
+			let cursor = BottleIter::from_batch(prev.hash(), &ctx.batch, header.policy);
+			let (algo, _) = consensus::next_policy(header.policy, cursor);
+
+			let is_correct = match header.pow.proof {
+				pow::Proof::CuckooProof { edge_bits, .. } => {
+					if edge_bits == 29 {
+						algo == PoWType::Cuckaroo
+					} else {
+						algo == PoWType::Cuckatoo
+					}
+				}
+				pow::Proof::RandomXProof { .. } => algo == PoWType::RandomX,
+				pow::Proof::ProgPowProof { .. } => algo == PoWType::ProgPow,
+				pow::Proof::MD5Proof { .. } => false,
+			};
+
+			if !is_correct {
+				debug!(
+					"Block rejected: Expected {:?} got {:?}",
+					algo, header.pow.proof
+				);
+				return Err(ErrorKind::InvalidSortAlgo.into());
+			}
+		} else {
+			return Err(ErrorKind::ThereIsNotPolicy.into());
+		}*/
+
+		warn!(">>> validate_headers, breakpoint 4");
+
+		// make sure this header has a height exactly one higher than the previous
+		// header
+		if header.height != prev.height + 1 {
+			return Err(ErrorKind::InvalidBlockHeight.into());
+		}
+
+		// TODO - get rid of the automated testing mode check here somehow
+		if header.timestamp <= prev.timestamp && !global::is_automated_testing_mode() {
+			// prevent time warp attacks and some timestamp manipulations by forcing strict
+			// time progression (but not in CI mode)
+			return Err(ErrorKind::InvalidBlockTime.into());
+		}
+
+		// verify the proof of work and related parameters
+		// at this point we have a previous block header
+		// we know the height increased by one
+		// so now we can check the total_difficulty increase is also valid
+		// check the pow hash shows a difficulty at least as large
+		// as the target difficulty
+		/*if !ctx.opts.contains(Options::SKIP_POW) {
+			let target_difficulty = header.total_difficulty() - prev.total_difficulty();
+
+			let target_difficulty_proof = target_difficulty.to_num((&header.pow.proof).into());
+
+			let diff = header
+				.pow
+				.to_difficulty(&header.pre_pow(), header.height, header.pow.nonce);
+
+			let diff_proof = diff.to_num((&header.pow.proof).into());
+
+			if diff_proof < target_difficulty_proof {
+				return Err(ErrorKind::DifficultyTooLow.into());
+			}
+
+			// explicit check to ensure total_difficulty has increased by exactly
+			// the _network_ difficulty of the previous block
+			// (during testnet1 we use _block_ difficulty here)
+			let child_batch = ctx.batch.child()?;
+			let diff_iter = store::DifficultyIter::from_batch(prev.hash(), child_batch);
+			let next_header_info = if header.height < consensus::difficultyfix_height() {
+				consensus::next_difficulty(header.height, (&prev.pow.proof).into(), diff_iter)
+			} else {
+				consensus::next_difficulty_era1(header.height, (&prev.pow.proof).into(), diff_iter)
+			};
+
+			if target_difficulty != next_header_info.difficulty {
+				info!(
+					"validate_header: header target difficulty {:?} != {:?}",
+					target_difficulty.num, next_header_info.difficulty.num
+				);
+				return Err(ErrorKind::WrongTotalDifficulty.into());
+			}
+			// check the secondary PoW scaling factor if applicable
+			if let pow::Proof::CuckooProof { .. } = header.pow.proof {
+				if header.pow.secondary_scaling != next_header_info.secondary_scaling {
+					info!(
+						"validate_header: header secondary scaling {} != {}",
+						header.pow.secondary_scaling, next_header_info.secondary_scaling
+					);
+					return Err(ErrorKind::InvalidScaling.into());
+				}
+			}
+		}*/
+		iter += 1;
+	} // for header in headers
+	warn!(">>> validate_headers, breakpoint 5");
 
 	Ok(())
 }
@@ -575,6 +783,13 @@ fn update_body_tail(bh: &BlockHeader, batch: &store::Batch<'_>) -> Result<(), Er
 fn add_block_header(bh: &BlockHeader, batch: &store::Batch<'_>) -> Result<(), Error> {
 	batch
 		.save_block_header(bh)
+		.map_err(|e| ErrorKind::StoreErr(e, "pipe save header".to_owned()))?;
+	Ok(())
+}
+
+fn add_block_headers(bhs: &[BlockHeader], batch: &store::Batch<'_>) -> Result<(), Error> {
+	batch
+		.save_block_headers(bhs)
 		.map_err(|e| ErrorKind::StoreErr(e, "pipe save header".to_owned()))?;
 	Ok(())
 }

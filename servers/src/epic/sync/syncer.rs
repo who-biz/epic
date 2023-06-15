@@ -187,6 +187,7 @@ impl SyncRunner {
 			// quick short-circuit (and a decent sleep) if no syncing is needed
 			if !needs_syncing {
 				if currently_syncing {
+					warn!(">>> currently_syncing condition hit!");
 					self.sync_state.update(SyncStatus::NoSync);
 
 					// Initial transition out of a "syncing" state and into NoSync.
@@ -424,6 +425,11 @@ impl SyncRunner {
 				_ => {
 					// skip body sync if header chain is not synced.
 					if header_head.height < highest_network_height {
+						warn!(
+							">>> body_sync portion of sync_state, continue case met. header_height({}), highest_network_height({})",
+							header_head.height,
+							highest_network_height
+						);
 						continue;
 					}
 
@@ -471,6 +477,12 @@ impl SyncRunner {
 		// difficulty than us
 		if is_syncing {
 			if peer_info.total_difficulty() <= local_diff {
+				warn!(
+					"is_syncing(true): total_difficulty {}, peer_difficulty {}, (last 5 blocks), we should be disabling sync",
+					local_diff,
+					peer_info.total_difficulty()
+				);
+
 				let ch = self.chain.head()?;
 				info!(
 					"Node synchronized at {} @ {} [{}]",
@@ -497,7 +509,7 @@ impl SyncRunner {
 
 			let peer_diff = peer_info.total_difficulty();
 			if peer_diff > local_diff.clone() + threshold.clone() {
-				debug!(
+				warn!(
 					"sync: total_difficulty {}, peer_difficulty {}, threshold {} (last 5 blocks), enabling sync",
 					local_diff,
 					peer_diff,

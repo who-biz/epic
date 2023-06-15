@@ -157,7 +157,12 @@ impl BodySync {
 		// some blocks have been requested
 		if self.blocks_requested > 0 {
 			// but none received since timeout, ask again
-			let timeout = Utc::now() > self.receive_timeout;
+			let now = Utc::now();
+			warn!(
+				"<<<< now({}), receive_timeout({})",
+				now, self.receive_timeout
+			);
+			let timeout = now > self.receive_timeout;
 			if timeout && blocks_received <= self.prev_blocks_received {
 				debug!(
 					"body_sync: expecting {} more blocks and none received for a while",
@@ -179,7 +184,10 @@ impl BodySync {
 		// off by one to account for broadcast adding a couple orphans
 		if self.blocks_requested < 2 {
 			// no pending block requests, ask more
-			debug!("body_sync: no pending block request, asking more");
+			debug!(
+				"body_sync: no pending block request, asking more (actual requested left = {})",
+				self.blocks_requested
+			);
 			return Ok(true);
 		}
 

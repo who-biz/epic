@@ -413,7 +413,10 @@ impl Chain {
 			let batch = self.store.batch()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut sync_pmmr, &mut txhashset)?;
 			pipe::sync_block_headers(headers, &mut ctx)?;
-			warn!(">>>> after pipe::sync_block_headers finish, not last!");
+			warn!(
+				">>>> after pipe::sync_block_headers finish, not last block! ctx.opts({:?})",
+				ctx.opts
+			);
 			ctx.batch.commit()?;
 		}
 
@@ -440,7 +443,7 @@ impl Chain {
 		txhashset: &'a mut txhashset::TxHashSet,
 	) -> Result<pipe::BlockContext<'a>, Error> {
 		Ok(pipe::BlockContext {
-			opts,
+			opts: Options::SKIP_POW,
 			pow_verifier: self.pow_verifier,
 			header_pmmr,
 			txhashset,

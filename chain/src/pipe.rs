@@ -208,11 +208,11 @@ pub fn sync_block_headers(
 
 	for header in headers {
 		validate_header(header, ctx)?;
-		let now = Utc::now().timestamp();
+		/*let now = Utc::now().timestamp();
 		warn!(
 			"<<<< pipe:sync_headers: after validate_headers, timediff({})",
 			(now - start_time)
-		);
+		);*/
 		add_block_header(header, &ctx.batch)?;
 	}
 
@@ -372,7 +372,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::InvalidBlockVersion(header.version).into());
 	}
 
-	warn!(">>> validate_header, breakpoint 1");
+	//warn!(">>> validate_header, breakpoint 1");
 	// TODO: remove CI check from here somehow
 	if header.timestamp > Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
 		&& !global::is_automated_testing_mode()
@@ -384,7 +384,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 
 	check_bad_header(header)?;
 
-	warn!(">>> validate_header, breakpoint 2");
+	//warn!(">>> validate_header, breakpoint 2");
 	if !ctx.opts.contains(Options::SKIP_POW) {
 		if !header.pow.is_primary() && !header.pow.is_secondary() {
 			return Err(ErrorKind::LowEdgebits.into());
@@ -414,7 +414,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		}
 	}
 
-	warn!(">>> validate_header, breakpoint 3");
+	//warn!(">>> validate_header, breakpoint 3");
 
 	// First I/O cost, delayed as late as possible.
 	let prev = prev_header_store(header, &mut ctx.batch)?;
@@ -457,7 +457,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::ThereIsNotPolicy.into());
 	}
 
-	warn!(">>> validate_header, breakpoint 4");
+	//warn!(">>> validate_header, breakpoint 4");
 
 	// make sure this header has a height exactly one higher than the previous
 	// header
@@ -522,7 +522,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 			}
 		}
 	}
-	warn!(">>> validate_header, breakpoint 5");
+	//warn!(">>> validate_header, breakpoint 5");
 
 	Ok(())
 }

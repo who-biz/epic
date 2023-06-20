@@ -66,7 +66,12 @@ impl HeaderSync {
 
 		match self.peers.get_connected_peer(self.peer.info.addr) {
 			Some(peer) => {
-				if !peer.is_connected() || peer.is_banned() {
+				if !peer.is_connected()
+					|| peer.is_banned() || !peer
+					.info
+					.capabilities
+					.contains(p2p::types::Capabilities::HEADER_FASTSYNC)
+				{
 					peer_blocks = true;
 				}
 			}

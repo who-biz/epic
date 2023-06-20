@@ -443,7 +443,6 @@ impl Chain {
 		txhashset: &'a mut txhashset::TxHashSet,
 	) -> Result<pipe::BlockContext<'a>, Error> {
 		Ok(pipe::BlockContext {
-			opts: Options::SKIP_POW,
 			pow_verifier: self.pow_verifier,
 			header_pmmr,
 			txhashset,

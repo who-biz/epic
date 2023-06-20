@@ -205,7 +205,18 @@ pub fn sync_block_headers(
 	// Note: This batch may be rolled back later if the MMR does not validate successfully.
 	let start_time = Utc::now().timestamp();
 	warn!(">>>> headers count = {}", headers.len());
-	validate_headers(headers, ctx)?;
+
+	for header in headers {
+		validate_header(header, ctx)?;
+		let now = Utc::now().timestamp();
+		warn!(
+			"<<<< pipe:sync_headers: after validate_headers, timediff({})",
+			(now - start_time)
+		);
+		add_block_header(header, &ctx.batch)?;
+	}
+
+	/*validate_headers(headers, ctx)?;
 	let mut now = Utc::now().timestamp();
 	warn!(
 		"<<<< pipe:sync_headers: after validate_headers, timediff({})",
@@ -216,7 +227,7 @@ pub fn sync_block_headers(
 	warn!(
 		"<<<< pipe:sync_headers: after add_block_headers, timediff({})",
 		(now - start_time)
-	);
+	);*/
 
 	// Now apply this entire chunk of headers to the sync MMR (ctx is sync MMR specific).
 	txhashset::header_extending(

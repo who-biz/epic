@@ -304,7 +304,13 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 			bhs.len(),
 			peer_info.addr
 		);
-		match self.chain().sync_block_headers(bhs, chain::Options::SYNC) {
+
+		let ctx_option = if self.config.skip_pow_validation.unwrap() {
+			Options::SKIP_POW
+		} else {
+			Options::SYNC
+		};
+		match self.chain().sync_block_headers(bhs, ctx_option) {
 			Ok(_) => {
 				info!(
 					"------------ Validation required: {:?} sec ------------",

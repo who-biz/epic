@@ -104,6 +104,14 @@ fn comments() -> HashMap<String, String> {
 	);
 
 	retval.insert(
+		"skip_pow_validation".to_string(),
+		"
+#Whether or not to skip pow validation when syncing headers, true or false
+"
+		.to_string(),
+	);
+
+	retval.insert(
 		"archive_mode".to_string(),
 		"
 #run the node in \"full archive\" mode (default is fast-sync, pruned node)

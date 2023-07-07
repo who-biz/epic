@@ -45,9 +45,17 @@ pub fn connect_and_monitor(
 	preferred_peers: Option<Vec<PeerAddr>>,
 	stop_state: Arc<StopState>,
 ) -> std::io::Result<thread::JoinHandle<()>> {
+	let start_time = Utc::now().timestamp();
+
 	thread::Builder::new()
 		.name("seed".to_string())
 		.spawn(move || {
+			let mut now = Utc::now().timestamp();
+			warn!(
+				"connect_and_montor thread.id({:?}, start_time({}))",
+				thread::current().id(),
+				start_time
+			);
 			let peers = p2p_server.peers.clone();
 			let sl = seed_list();
 
@@ -63,6 +71,12 @@ pub fn connect_and_monitor(
 			let mut connecting_history: HashMap<PeerAddr, DateTime<Utc>> = HashMap::new();
 
 			loop {
+				now = Utc::now().timestamp();
+				warn!(
+					"start loop: connect_and_montor thread.id({:?}, time_elapsed({}))",
+					thread::current().id(),
+					(now - start_time)
+				);
 				if stop_state.is_stopped() {
 					break;
 				}
@@ -108,12 +122,15 @@ pub fn connect_and_monitor(
 					);
 
 					// monitor additional peers if we need to add more
-					monitor_peers(
+					let monitor = monitor_peers(
 						peers.clone(),
 						p2p_server.config.clone(),
 						tx.clone(),
 						preferred_peers.clone(),
 					);
+					if !monitor {
+						break;
+					}
 
 					prev = Utc::now();
 					start_attempt = cmp::min(6, start_attempt + 1);
@@ -132,6 +149,12 @@ pub fn connect_and_monitor(
 				}
 
 				thread::sleep(time::Duration::from_secs(1));
+				now = Utc::now().timestamp();
+				warn!(
+					"end loop: connect_and_montor thread.id({:?}, time_elapsed({}))",
+					thread::current().id(),
+					(now - start_time)
+				);
 			}
 		})
 }
@@ -141,7 +164,7 @@ fn monitor_peers(
 	config: p2p::P2PConfig,
 	tx: mpsc::Sender<PeerAddr>,
 	preferred_peers_list: Option<Vec<PeerAddr>>,
-) {
+) -> bool {
 	// regularly check if we need to acquire more peers  and if so, gets
 	// them from db
 	let total_count = peers.all_peers().len();
@@ -191,7 +214,7 @@ fn monitor_peers(
 	);
 
 	if peers.enough_outbound_peers() {
-		return;
+		return false;
 	}
 
 	// loop over connected peers
@@ -248,6 +271,7 @@ fn monitor_peers(
 			tx.send(p.addr).unwrap();
 		}
 	}
+	return true;
 }
 
 // Check if we have any pre-existing peer in db. If so, start with those,

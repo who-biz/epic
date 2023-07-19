@@ -290,11 +290,11 @@ impl<'a> Batch<'a> {
 		self.db
 			.put_ser(&to_key(BLOCK_HEADER_PREFIX, &mut hash.to_vec())[..], header)?;
 
-		let now = chrono::Utc::now().timestamp();
+		/*let now = chrono::Utc::now().timestamp();
 		warn!(
 			"After DB operation in save_block_header, time_diff({})",
 			(now - start_time)
-		);
+		);*/
 		Ok(())
 	}
 
@@ -307,11 +307,11 @@ impl<'a> Batch<'a> {
 			self.db
 				.put_ser(&to_key(BLOCK_HEADER_PREFIX, &mut hash.to_vec())[..], header)?;
 		}
-		let now = chrono::Utc::now().timestamp();
+		/*let now = chrono::Utc::now().timestamp();
 		warn!(
 			"After DB operation in save_block_headers, time_diff({})",
 			(now - start_time)
-		);
+		);*/
 		Ok(())
 	}
 

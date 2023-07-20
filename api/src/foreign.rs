@@ -14,7 +14,6 @@
 
 //! Foreign API External Definition
 
-use epic_core::core::TxKernel;
 use crate::chain::{Chain, SyncState};
 use crate::core::core::hash::Hash;
 use crate::core::core::transaction::Transaction;
@@ -30,6 +29,7 @@ use crate::types::{
 	Version,
 };
 use crate::util::RwLock;
+use epic_core::core::TxKernel;
 use std::sync::Weak;
 
 /// Main interface into all node API functions.
@@ -122,7 +122,22 @@ impl Foreign {
 			chain: self.chain.clone(),
 		};
 		let hash = block_handler.parse_inputs(height, hash, commit)?;
-		block_handler.get_block(&hash, true, true)
+		warn!(
+			"<--> block hash retrieved from header: hash({:?}) height({:?})",
+			hash, height
+		);
+		let block = block_handler.get_block(&hash, true, true);
+		match block {
+			Ok(b) => Ok(b),
+			Err(e) => {
+				let compact = block_handler.get_compact_block(&hash);
+				warn!(
+					"<--> compact block found, regular block not found. compact({:?})",
+					compact
+				);
+				Err(e)
+			}
+		}
 	}
 
 	/// Returns the node version and block header version (used by epic-wallet).
@@ -184,17 +199,14 @@ impl Foreign {
 		kernel_handler.get_kernel_v2(excess, min_height, max_height)
 	}
 
-	pub fn get_last_n_kernels(
-		&self,
-		distance: u64,
-	) -> Result<Vec<TxKernel>, Error>{
+	pub fn get_last_n_kernels(&self, distance: u64) -> Result<Vec<TxKernel>, Error> {
 		let kernel_handler = KernelHandler {
-			chain: self.chain.clone()
+			chain: self.chain.clone(),
 		};
 		let kernels = kernel_handler.get_last_n_kernels(distance);
 		match kernels {
 			Ok(k) => Ok(k),
-			Err(k) => Err(k)
+			Err(k) => Err(k),
 		}
 	}
 

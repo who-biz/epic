@@ -785,6 +785,7 @@ impl Chain {
 		hashes: &mut Option<Vec<Hash>>,
 	) -> Result<bool, Error> {
 		let horizon = global::cut_through_horizon() as u64;
+		warn!("<----------> horizon({:?})", horizon);
 		let body_head = self.head()?;
 		let header_head = self.header_head()?;
 		let sync_head = self.get_sync_head()?;

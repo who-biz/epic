@@ -79,7 +79,10 @@ impl HeaderHandler {
 	) -> Result<Hash, Error> {
 		if let Some(height) = height {
 			match w(&self.chain)?.get_header_by_height(height) {
-				Ok(header) => return Ok(header.hash()),
+				Ok(header) => {
+					warn!("<--> parse_inputs, header retrieved: {:?}", header);
+					return Ok(header.hash());
+				}
 				Err(_) => return Err(ErrorKind::NotFound)?,
 			}
 		}
@@ -133,7 +136,7 @@ impl BlockHandler {
 			.map_err(|_| ErrorKind::Internal("chain error".to_owned()).into())
 	}
 
-	fn get_compact_block(&self, h: &Hash) -> Result<CompactBlockPrintable, Error> {
+	pub fn get_compact_block(&self, h: &Hash) -> Result<CompactBlockPrintable, Error> {
 		let chain = w(&self.chain)?;
 		let block = chain.get_block(h).context(ErrorKind::NotFound)?;
 		CompactBlockPrintable::from_compact_block(&block.into(), chain)

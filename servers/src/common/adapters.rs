@@ -305,11 +305,13 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 			peer_info.addr
 		);
 
-		let ctx_option = if self.config.skip_pow_validation.unwrap() {
-			Options::SKIP_POW
-		} else {
-			Options::SYNC
-		};
+		let mut ctx_option = Options::SYNC;
+
+		if self.config.skip_pow_validation.is_some() {
+			if self.config.skip_pow_validation.unwrap() {
+				ctx_option = Options::SKIP_POW;
+			}
+		}
 		match self.chain().sync_block_headers(bhs, ctx_option) {
 			Ok(_) => {
 				info!(

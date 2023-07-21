@@ -429,30 +429,86 @@ impl BlockchainCheckpoints {
 	pub fn new() -> BlockchainCheckpoints {
 		let checkpoints = vec![
 			Checkpoint {
-				height: 1000,
-				block_hash: Hash::from_hex(
-					"3f21aee096ea15c7f6789d47418c3cb48c804b1431f1454564034ded0ff5a88f",
-				)
-				.unwrap(),
-			},
-			Checkpoint {
-				height: 5000,
-				block_hash: Hash::from_hex(
-					"c10d0b27ace4e377bf0fb37bccbe2b53bbd69e3aa8fd8365cfec8e7c1d13a6bd",
-				)
-				.unwrap(),
-			},
-			Checkpoint {
-				height: 10000,
-				block_hash: Hash::from_hex(
-					"8764cad7419647b3bea209e93d23c904c72ac104497bd46954de87c493d37e45",
-				)
-				.unwrap(),
-			},
-			Checkpoint {
 				height: 100000,
 				block_hash: Hash::from_hex(
 					"e835eb9ebc9f2e13b11061691cb268f44b20001f081003169b634497eb730848",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 200000,
+				block_hash: Hash::from_hex(
+					"b2365a8c9719a709f11d450bbddfd012011e21c862239bdc8590aba00815e84c",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 400000,
+				block_hash: Hash::from_hex(
+					"6578f1cdf5504d29fc757424e75ac60494e0f6d24b7553d124c8bea6ef99b5d8",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 600000,
+				block_hash: Hash::from_hex(
+					"de483eafb2141d66bf541a94d8e41858f01ffc517b9fa61d8781483c34c2a6f7",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 800000,
+				block_hash: Hash::from_hex(
+					"1465e7c094376e781b1e80ebd6b7a0c6350ec4d6554f9acdd843802162831003",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 1000000,
+				block_hash: Hash::from_hex(
+					"00e4a404130ac192face23fd25f2c46a99a38a31d8cf2d3cc79ea7a518830686",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 1200000,
+				block_hash: Hash::from_hex(
+					"8d69282df5579d32346ad0f6d3f4e03a43b1e00e741b1f3ba71c2934d81e5e1a",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 1400000,
+				block_hash: Hash::from_hex(
+					"e7e34e50e8a5c9bcf3fe7b7ad99e62a848cda37171ce8d37f21bc334035df4d2",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 1600000,
+				block_hash: Hash::from_hex(
+					"ba44beaf37776c3e7da3f4a1b906ae238e1178794cbaa90685e3945d2662d7a2",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 1800000,
+				block_hash: Hash::from_hex(
+					"4f23aaf2e83e4041cac670226d3024f4468e3b9bb6ffa2548ebc59489bd09b63",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 2000000,
+				block_hash: Hash::from_hex(
+					"eaf5d7a4b6f07ccb8bdbe5db2f39e10eea3ee1c28f8333907d91c9ccc21ce99d",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 2050000,
+				block_hash: Hash::from_hex(
+					"a33958cdea730ede390c329c8312182ccc26ee2109c3f21cfdbe19e8777428c9",
 				)
 				.unwrap(),
 			},

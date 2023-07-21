@@ -1,3 +1,4 @@
+// Copyright 2019-2023, Epic Cash Developers
 // Copyright 2018 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -409,4 +410,53 @@ pub enum BlockStatus {
 	/// Block updates the chain head via a (potentially disruptive) "reorg".
 	/// Previous block was not our previous chain head.
 	Reorg(u64),
+}
+
+// Elements in checkpoint data vector
+#[derive(Debug)]
+pub struct Checkpoint {
+	pub height: u64,
+	pub block_hash: Hash,
+	//	pow_hash: Hash,
+}
+
+#[derive(Debug)]
+pub struct BlockchainCheckpoints {
+	pub checkpoints: Vec<Checkpoint>,
+}
+
+impl BlockchainCheckpoints {
+	pub fn new() -> BlockchainCheckpoints {
+		let checkpoints = vec![
+			Checkpoint {
+				height: 1000,
+				block_hash: Hash::from_hex(
+					"3f21aee096ea15c7f6789d47418c3cb48c804b1431f1454564034ded0ff5a88f",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 5000,
+				block_hash: Hash::from_hex(
+					"c10d0b27ace4e377bf0fb37bccbe2b53bbd69e3aa8fd8365cfec8e7c1d13a6bd",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 10000,
+				block_hash: Hash::from_hex(
+					"8764cad7419647b3bea209e93d23c904c72ac104497bd46954de87c493d37e45",
+				)
+				.unwrap(),
+			},
+			Checkpoint {
+				height: 100000,
+				block_hash: Hash::from_hex(
+					"e835eb9ebc9f2e13b11061691cb268f44b20001f081003169b634497eb730848",
+				)
+				.unwrap(),
+			},
+		];
+		return BlockchainCheckpoints { checkpoints };
+	}
 }

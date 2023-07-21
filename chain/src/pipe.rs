@@ -27,7 +27,7 @@ use crate::error::{Error, ErrorKind};
 use crate::store;
 use crate::store::BottleIter;
 use crate::txhashset;
-use crate::types::{CommitPos, Options, Tip};
+use crate::types::{BlockchainCheckpoints, CommitPos, Options, Tip};
 use crate::util::RwLock;
 use chrono::prelude::Utc;
 use chrono::Duration;
@@ -360,7 +360,6 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::InvalidBlockVersion(header.version).into());
 	}
 
-	//warn!(">>> validate_header, breakpoint 1");
 	// TODO: remove CI check from here somehow
 	if header.timestamp > Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
 		&& !global::is_automated_testing_mode()
@@ -372,8 +371,25 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 
 	check_bad_header(header)?;
 
-	//warn!(">>> validate_header, breakpoint 2");
-	if !ctx.opts.contains(Options::SKIP_POW) {
+	let checkpoints = BlockchainCheckpoints::new().checkpoints;
+
+	for c in &checkpoints {
+		if header.height == c.height {
+			if header.hash() == c.block_hash {
+				info!(
+					"Checkpoint successfully passed at height({})! Hashes: header({:?}), checkpoint({:?})",
+					 c.height,
+					 header.hash(),
+					 c.block_hash
+				);
+			} else {
+				return Err(ErrorKind::CheckpointFailure.into());
+			}
+		}
+	}
+
+	if !ctx.opts.contains(Options::SKIP_POW) || (header.height > checkpoints.last().unwrap().height)
+	{
 		if !header.pow.is_primary() && !header.pow.is_secondary() {
 			return Err(ErrorKind::LowEdgebits.into());
 		}
@@ -401,8 +417,6 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 			return Err(ErrorKind::InvalidPow.into());
 		}
 	}
-
-	//warn!(">>> validate_header, breakpoint 3");
 
 	// First I/O cost, delayed as late as possible.
 	let prev = prev_header_store(header, &mut ctx.batch)?;
@@ -444,8 +458,6 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	} else {
 		return Err(ErrorKind::ThereIsNotPolicy.into());
 	}
-
-	//warn!(">>> validate_header, breakpoint 4");
 
 	// make sure this header has a height exactly one higher than the previous
 	// header
@@ -510,7 +522,6 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 			}
 		}
 	}
-	//warn!(">>> validate_header, breakpoint 5");
 
 	Ok(())
 }

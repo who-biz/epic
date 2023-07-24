@@ -449,7 +449,7 @@ impl BlockchainCheckpoints {
 				)
 				.unwrap(),
 			},
-			/*			Checkpoint {
+			Checkpoint {
 				height: 600000,
 				block_hash: Hash::from_hex(
 					"de483eafb2141d66bf541a94d8e41858f01ffc517b9fa61d8781483c34c2a6f7",
@@ -508,10 +508,10 @@ impl BlockchainCheckpoints {
 			Checkpoint {
 				height: 2050000,
 				block_hash: Hash::from_hex(
-					"a33958cdea730ede390c329c8312182ccc26ee2109c3f21cfdbe19e8777428c9",
+					"1a51bb18562e120f33783e53a70c449fd14197ac77082dc23d664c7f47a744c9",
 				)
 				.unwrap(),
-			},*/
+			},
 		];
 		return BlockchainCheckpoints { checkpoints };
 	}

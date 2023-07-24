@@ -425,10 +425,6 @@ impl Chain {
 			let batch = self.store.batch()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut header_pmmr, &mut txhashset)?;
 			pipe::process_block_header(header, &mut ctx)?;
-			warn!(
-				">>>> after pipe::sync_block_headers finish, last({:?})",
-				header
-			);
 			ctx.batch.commit()?;
 		}
 

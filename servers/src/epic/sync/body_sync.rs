@@ -57,14 +57,14 @@ impl BodySync {
 	) -> Result<bool, chain::Error> {
 		// run the body_sync every 5s
 		if self.body_sync_due()? {
-			if self.body_sync()? {
-				return Ok(true);
-			}
-
 			self.sync_state.update(SyncStatus::BodySync {
 				current_height: head.height,
 				highest_height: highest_height,
 			});
+
+			if self.body_sync()? {
+				return Ok(true);
+			}
 		}
 		Ok(false)
 	}

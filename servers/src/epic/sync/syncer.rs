@@ -430,6 +430,7 @@ impl SyncRunner {
 							header_head.height,
 							highest_network_height
 						);
+						warn!("<<< sync_state({:?})", self.sync_state.status());
 						continue;
 					}
 

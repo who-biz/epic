@@ -431,6 +431,7 @@ impl SyncRunner {
 							highest_network_height
 						);
 						warn!("<<< sync_state({:?})", self.sync_state.status());
+						download_headers = true;
 						continue;
 					}
 

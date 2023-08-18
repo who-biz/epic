@@ -173,12 +173,16 @@ impl BodySync {
 		}
 
 		if blocks_received > self.prev_blocks_received {
+			warn!("<<< if case hit, blocks_received > self.prev_blocks_received");
 			// some received, update for next check
 			self.receive_timeout = Utc::now() + Duration::seconds(1);
 			self.blocks_requested = self
 				.blocks_requested
 				.saturating_sub(blocks_received - self.prev_blocks_received);
 			self.prev_blocks_received = blocks_received;
+		} else {
+			warn!(">>> else case hit in body_sync");
+			return Ok(true);
 		}
 
 		// off by one to account for broadcast adding a couple orphans

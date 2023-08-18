@@ -388,7 +388,8 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		}
 	}
 
-	if !ctx.opts.contains(Options::SKIP_POW) || (header.height > checkpoints.last().unwrap().height)
+	if !ctx.opts.contains(Options::SKIP_POW)
+	/*|| (header.height > checkpoints.last().unwrap().height)*/
 	{
 		if !header.pow.is_primary() && !header.pow.is_secondary() {
 			return Err(ErrorKind::LowEdgebits.into());

@@ -133,7 +133,7 @@ impl BodySync {
 
 			// reinitialize download tracking state
 			self.blocks_requested = 0;
-			self.receive_timeout = Utc::now() + Duration::seconds(6);
+			self.receive_timeout = Utc::now() + Duration::seconds(3);
 
 			let mut peers_iter = peers.iter().cycle();
 			for hash in hashes_to_get.clone() {

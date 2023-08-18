@@ -182,7 +182,13 @@ impl BodySync {
 			self.prev_blocks_received = blocks_received;
 		} else {
 			warn!(">>> else case hit in body_sync");
-			return Ok(true);
+			let now = Utc::now();
+			let timeout = now > self.receive_timeout;
+			warn!(">>> now({}), timeout({})", now, self.receive_timeout);
+			if timeout {
+				warn!("------- timeout check, need more -------");
+				return Ok(true);
+			}
 		}
 
 		// off by one to account for broadcast adding a couple orphans

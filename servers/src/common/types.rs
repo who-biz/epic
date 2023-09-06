@@ -172,8 +172,13 @@ pub struct ServerConfig {
 	/// Whether this node is a full archival node or a fast-sync, pruned node
 	pub archive_mode: Option<bool>,
 
-	// How to validate new block headers
+	/// Disable pow validation in checkpointed range, fully validate all blocks
+	/// Outside of checkpointed range
 	pub skip_pow_validation: Option<bool>,
+
+	/// Disable pow validation all the way to chaintip, only has effect when
+	/// skip_pow_validation is also set to 'true'
+	pub disable_checkpoints: Option<bool>,
 
 	/// Whether to skip the sync timeout on startup
 	/// (To assist testing on solo chains)
@@ -240,6 +245,7 @@ impl Default for ServerConfig {
 			chain_type: ChainTypes::default(),
 			archive_mode: Some(false),
 			skip_pow_validation: Some(false),
+			disable_checkpoints: Some(false),
 			chain_validation_mode: ChainValidationMode::default(),
 			pool_config: pool::PoolConfig::default(),
 			skip_sync_wait: Some(false),

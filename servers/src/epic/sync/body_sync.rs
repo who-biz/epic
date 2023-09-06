@@ -133,7 +133,7 @@ impl BodySync {
 
 			// reinitialize download tracking state
 			self.blocks_requested = 0;
-			self.receive_timeout = Utc::now() + Duration::seconds(3);
+			self.receive_timeout = Utc::now() + Duration::seconds(5);
 
 			let mut peers_iter = peers.iter().cycle();
 			for hash in hashes_to_get.clone() {
@@ -163,7 +163,7 @@ impl BodySync {
 			//				now, self.receive_timeout
 			//			);
 			let timeout = now > self.receive_timeout;
-			if timeout && blocks_received <= self.prev_blocks_received {
+			if blocks_received <= self.prev_blocks_received {
 				debug!(
 					"body_sync: expecting {} more blocks and none received for a while",
 					self.blocks_requested,
@@ -172,7 +172,7 @@ impl BodySync {
 			}
 		}
 
-		if blocks_received > self.prev_blocks_received {
+		if blocks_received > (self.prev_blocks_received + 10) {
 			warn!(
 				"<<< if case hit, blocks_received({}), prev_block({}",
 				blocks_received, self.prev_blocks_received
@@ -184,7 +184,7 @@ impl BodySync {
 				.saturating_sub(blocks_received - self.prev_blocks_received);
 			self.prev_blocks_received = blocks_received;
 		} else {
-			warn!(">>> else case hit in body_sync");
+			//warn!(">>> else case hit in body_sync");
 			let now = Utc::now();
 			let timeout = now > self.receive_timeout;
 			//			warn!(">>> now({}), timeout({})", now, self.receive_timeout);
@@ -195,7 +195,7 @@ impl BodySync {
 		}
 
 		// off by one to account for broadcast adding a couple orphans
-		if self.blocks_requested < 25 {
+		if self.blocks_requested <= 5 {
 			// no pending block requests, ask more
 			debug!(
 				"body_sync: no pending block request, asking more (actual requested left = {})",
@@ -203,7 +203,7 @@ impl BodySync {
 			);
 			return Ok(true);
 		}
-
+		//warn!(">>>>>> RETURNING FALSE IN BODY_SYNC_DUE!");
 		Ok(false)
 	}
 

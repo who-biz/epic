@@ -426,12 +426,35 @@ impl SyncRunner {
 					// skip body sync if header chain is not synced.
 					if header_head.height < highest_network_height {
 						warn!(
-							">>> body_sync portion of sync_state, continue case met. header_height({}), highest_network_height({})",
+							">>> DEFAULT_CASE portion of sync_state, continue case met. header_height({}), highest_network_height({})",
 							header_head.height,
 							highest_network_height
 						);
 						warn!("<<< sync_state({:?})", self.sync_state.status());
-						//						download_headers = true;
+
+						match self.sync_state.status() {
+							SyncStatus::BodySync { .. } => {
+								download_headers = true;
+								if !self.chain.clear_orphans() {
+									error!(
+										"Failed to fully clear ophan hashmap, continuing anyway!"
+									);
+								}
+								match self.chain.reset_sync_head() {
+									Ok(_) => (),
+									Err(e) => {
+										error!(
+											"Unable to reset sync head, error: {:?}",
+											e.to_string()
+										);
+									}
+								}
+								self.sync_state.update(SyncStatus::Initial)
+							}
+							_ => {}
+						}
+						// TODO: toggle below if we are in BodySync for this default case
+						//download_headers = true;
 						continue;
 					}
 

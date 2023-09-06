@@ -133,6 +133,14 @@ impl OrphanBlockPool {
 			.map(|hs| hs.iter().filter_map(|h| orphans.remove(h)).collect())
 	}
 
+	pub fn clear(&self) -> bool {
+		let mut orphans = self.orphans.write();
+		let mut height_idx = self.height_idx.write();
+		orphans.clear();
+		height_idx.clear();
+		return (orphans.is_empty() && height_idx.is_empty());
+	}
+
 	pub fn contains(&self, hash: &Hash) -> bool {
 		let orphans = self.orphans.read();
 		orphans.contains_key(hash)
@@ -514,6 +522,10 @@ impl Chain {
 				self.orphans.len(),
 			);
 		}
+	}
+
+	pub fn clear_orphans(&self) -> bool {
+		self.orphans.clear()
 	}
 
 	/// For the given commitment find the unspent output and return the

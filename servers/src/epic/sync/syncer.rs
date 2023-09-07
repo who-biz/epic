@@ -126,14 +126,14 @@ impl SyncRunner {
     		}
     	));
 
+		let mut download_headers = false;
+		let mut highest_network_height = 0;
+
 		// Wait for connections reach at least MIN_PEERS
 		if let Err(e) = self.wait_for_min_peers() {
 			error!("wait_for_min_peers failed: {:?}", e);
 		}
 
-		// Our 3 main sync stages
-		// fast header sync
-		//let mut header_syncs: HashMap<String, Rc<RefCell<HeaderSync>>> = HashMap::new();
 		let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
 		let mut offset = 0;
 		let mut tochain_attemps = 0;
@@ -142,315 +142,363 @@ impl SyncRunner {
 			Arc::new(std::sync::Mutex::new(HashMap::new()));
 
 		let chainsync = self.peers.clone();
+		'outer_loop: loop {
+			//			warn!("1.5, beginning of outer loop");
 
-		let mut download_headers = false;
+			//let start_time = Utc::now();
+			//warn!("1, before start of outer loop");
+			let mut body_sync = BodySync::new(
+				self.sync_state.clone(),
+				self.peers.clone(),
+				self.chain.clone(),
+			);
 
-		let mut body_sync = BodySync::new(
-			self.sync_state.clone(),
-			self.peers.clone(),
-			self.chain.clone(),
-		);
-		let mut state_sync = StateSync::new(
-			self.sync_state.clone(),
-			self.peers.clone(),
-			self.chain.clone(),
-		);
+			// Our 3 main sync stages
+			// fast header sync
+			//let mut header_syncs: HashMap<String, Rc<RefCell<HeaderSync>>> = HashMap::new();
+			let mut state_sync = StateSync::new(
+				self.sync_state.clone(),
+				self.peers.clone(),
+				self.chain.clone(),
+			);
 
-		// Highest height seen on the network, generally useful for a fast test on
-		// whether some sync is needed
-		let mut highest_network_height = 0;
-
-		// Main syncing loop
-		loop {
-			if self.stop_state.is_stopped() {
-				//close running header sync threads
-				for header_sync in header_syncs {
-					let _ = header_sync.1.send(false);
-				}
-				break;
-			}
-
-			thread::sleep(time::Duration::from_millis(10));
-
-			let currently_syncing = self.sync_state.is_syncing();
-
-			// check whether syncing is generally needed, when we compare our state with others
-			let (needs_syncing, most_work_height) = unwrap_or_restart_loop!(self.needs_syncing());
-
-			if most_work_height > 0 {
-				// we can occasionally get a most work height of 0 if read locks fail
-				highest_network_height = most_work_height;
-			}
-
-			//sync_slots = highest_network_height / sync_slot_size as u64;
-			//info!("current sync_slots: {:?}", sync_slots);
-			// quick short-circuit (and a decent sleep) if no syncing is needed
-			if !needs_syncing {
-				if currently_syncing {
-					self.sync_state.update(SyncStatus::NoSync);
-
-					// Initial transition out of a "syncing" state and into NoSync.
-					// This triggers a chain compaction to keep out local node tidy.
-					// Note: Chain compaction runs with an internal threshold
-					// so can be safely run even if the node is restarted frequently.
-					unwrap_or_restart_loop!(self.chain.compact());
-				}
-
-				// sleep for 10 secs but check stop signal every second
-				for _ in 1..10 {
-					thread::sleep(time::Duration::from_secs(1));
-					if self.stop_state.is_stopped() {
-						break;
+			// Main syncing loop
+			'inner_loop: loop {
+				//warn!("2, start of inner loop");
+				if self.stop_state.is_stopped() {
+					//close running header sync threads
+					for header_sync in header_syncs {
+						let _ = header_sync.1.send(false);
 					}
+					break 'outer_loop;
 				}
-				continue;
-			}
 
-			// if syncing is needed
-			let head = unwrap_or_restart_loop!(self.chain.head());
-			let tail = self.chain.tail().unwrap_or_else(|_| head.clone());
-			let header_head = unwrap_or_restart_loop!(self.chain.header_head());
-			let mut check_state_sync = false;
-			// run each sync stage, each of them deciding whether they're needed
-			// except for state sync that only runs if body sync return true (means txhashset is needed)
-			//add new header_sync peer if we found a new peer which is not in list
+				thread::sleep(time::Duration::from_millis(10));
 
-			if download_headers {
-				for peer in self.peers.clone().most_work_peers() {
-					let peer_addr = peer.info.addr.to_string();
-					if (peer
-						.info
-						.capabilities
-						.contains(p2p::types::Capabilities::HEADER_FASTSYNC)
-						|| offset == 0) && peer.is_connected()
-						&& !peer.is_banned() && (header_head.height + (offset as u64 * 512))
-						< highest_network_height
-					{
-						let mut remove_peer_from_sync = false;
-						match header_syncs.get(&peer_addr) {
-							Some(header_sync) => {
-								if let Err(_e) = header_sync.send(false) {
-									remove_peer_from_sync = true;
+				let currently_syncing = self.sync_state.is_syncing();
+
+				// check whether syncing is generally needed, when we compare our state with others
+				let (needs_syncing, most_work_height) =
+					unwrap_or_restart_loop!(self.needs_syncing());
+
+				if most_work_height > 0 {
+					// we can occasionally get a most work height of 0 if read locks fail
+					highest_network_height = most_work_height;
+				}
+
+				//sync_slots = highest_network_height / sync_slot_size as u64;
+				//info!("current sync_slots: {:?}", sync_slots);
+				// quick short-circuit (and a decent sleep) if no syncing is needed
+				if !needs_syncing {
+					if currently_syncing {
+						self.sync_state.update(SyncStatus::NoSync);
+
+						// Initial transition out of a "syncing" state and into NoSync.
+						// This triggers a chain compaction to keep out local node tidy.
+						// Note: Chain compaction runs with an internal threshold
+						// so can be safely run even if the node is restarted frequently.
+						unwrap_or_restart_loop!(self.chain.compact());
+					}
+
+					// sleep for 10 secs but check stop signal every second
+					for _ in 1..10 {
+						thread::sleep(time::Duration::from_secs(1));
+						if self.stop_state.is_stopped() {
+							break 'outer_loop;
+						}
+					}
+					continue;
+				}
+
+				//warn!("3, before download_headers");
+
+				// if syncing is needed
+				let head = unwrap_or_restart_loop!(self.chain.head());
+				let tail = self.chain.tail().unwrap_or_else(|_| head.clone());
+				let header_head = unwrap_or_restart_loop!(self.chain.header_head());
+				let mut check_state_sync = false;
+				// run each sync stage, each of them deciding whether they're needed
+				// except for state sync that only runs if body sync return true (means txhashset is needed)
+				//add new header_sync peer if we found a new peer which is not in list
+
+				if download_headers {
+					for peer in self.peers.clone().most_work_peers() {
+						let peer_addr = peer.info.addr.to_string();
+						if (peer
+							.info
+							.capabilities
+							.contains(p2p::types::Capabilities::HEADER_FASTSYNC)
+							|| offset == 0) && peer.is_connected()
+							&& !peer.is_banned() && (header_head.height + (offset as u64 * 512))
+							< highest_network_height
+						{
+							let mut remove_peer_from_sync = false;
+							match header_syncs.get(&peer_addr) {
+								Some(header_sync) => {
+									if let Err(_e) = header_sync.send(false) {
+										remove_peer_from_sync = true;
+									}
 								}
-							}
 
-							None => {
-								let (sender, receiver) = channel();
+								None => {
+									let (sender, receiver) = channel();
 
-								let mut header_sync = HeaderSync::new(
-									self.sync_state.clone(),
-									self.peers.clone(),
-									peer.clone(),
-									self.chain.clone(),
-									header_head.height.clone(),
-									highest_network_height.clone(),
-									offset.clone(),
-								);
+									let mut header_sync = HeaderSync::new(
+										self.sync_state.clone(),
+										self.peers.clone(),
+										peer.clone(),
+										self.chain.clone(),
+										header_head.height.clone(),
+										highest_network_height.clone(),
+										offset.clone(),
+									);
 
-								let handler: JoinHandle<FastsyncHeaderQueue> =
-									thread::spawn(move || {
-										let mut synchthread_headers = FastsyncHeaderQueue {
-											offset: header_sync.offset(),
-											peer_info: peer.info.clone(),
-											headers: vec![],
-										};
-										loop {
-											let stop = match receiver.try_recv() {
-												Ok(rcv) => rcv,
-												Err(std::sync::mpsc::TryRecvError::Empty) => false,
-												Err(
-													std::sync::mpsc::TryRecvError::Disconnected,
-												) => {
-													println!("Terminating sync thread");
+									let handler: JoinHandle<FastsyncHeaderQueue> =
+										thread::spawn(move || {
+											let mut synchthread_headers = FastsyncHeaderQueue {
+												offset: header_sync.offset(),
+												peer_info: peer.info.clone(),
+												headers: vec![],
+											};
+											loop {
+												let stop = match receiver.try_recv() {
+													Ok(rcv) => rcv,
+													Err(std::sync::mpsc::TryRecvError::Empty) => {
+														false
+													}
+													Err(
+														std::sync::mpsc::TryRecvError::Disconnected,
+													) => {
+														println!("Terminating sync thread");
 
+														break;
+													}
+												};
+
+												if stop {
+													info!("Sync thread stop");
 													break;
 												}
-											};
 
-											if stop {
-												info!("Sync thread stop");
-												break;
-											}
-
-											match header_sync.check_run() {
-												Ok((headers, peer_blocks)) => {
-													if peer_blocks {
-														break;
+												match header_sync.check_run() {
+													Ok((headers, peer_blocks)) => {
+														if peer_blocks {
+															break;
+														}
+														if headers.len() > 0 {
+															synchthread_headers.headers = headers;
+															break;
+														}
 													}
-													if headers.len() > 0 {
-														synchthread_headers.headers = headers;
-														break;
-													}
+													Err(_) => break,
 												}
-												Err(_) => break,
+
+												thread::sleep(time::Duration::from_millis(1000));
 											}
+											synchthread_headers
+										});
 
-											thread::sleep(time::Duration::from_millis(1000));
-										}
-										synchthread_headers
-									});
-
-								let feedback = handler.join().unwrap();
-								//dont process if headers are empty
-								if feedback.headers.len() <= 0 {
-									continue;
-								}
-
-								if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
-									match fastsync_headers
-										.insert(feedback.headers[0].height, feedback)
-									{
-										Some(_s) => {
-											error!("headers already in queue");
-										}
-										None => {}
+									let feedback = handler.join().unwrap();
+									//dont process if headers are empty
+									if feedback.headers.len() <= 0 {
+										continue;
 									}
-								} else {
-									error!("failed to get lock to insert headers to queue");
-								}
 
-								offset = offset + 1 as u8;
-								header_syncs.insert(peer_addr.clone(), sender);
+									if let Ok(mut fastsync_headers) =
+										fastsync_header_queue.try_lock()
+									{
+										match fastsync_headers
+											.insert(feedback.headers[0].height, feedback)
+										{
+											Some(_s) => {
+												error!("headers already in queue");
+											}
+											None => {}
+										}
+									} else {
+										error!("failed to get lock to insert headers to queue");
+									}
+
+									offset = offset + 1 as u8;
+									header_syncs.insert(peer_addr.clone(), sender);
+								}
+							}
+
+							if remove_peer_from_sync {
+								header_syncs.remove(&peer_addr);
 							}
 						}
+					}
+				}
 
-						if remove_peer_from_sync {
-							header_syncs.remove(&peer_addr);
+				if header_syncs.len() > 0 {
+					download_headers = false;
+
+					// just for stats
+					if let Ok(fastsync_headers) = fastsync_header_queue.try_lock() {
+						info!("------------ Downloaded headers in queue ------------");
+
+						let mut sorted: Vec<_> = fastsync_headers.iter().collect();
+						sorted.sort_by_key(|a| a.0);
+						for (key, value) in sorted.iter() {
+							info!(
+								"Start height: {:?}, Headers: {:?}, offset: {:?}",
+								key,
+								value.headers.len(),
+								value.offset
+							);
 						}
-					}
-				}
-			}
-
-			if header_syncs.len() > 0 {
-				download_headers = false;
-
-				// just for stats
-				if let Ok(fastsync_headers) = fastsync_header_queue.try_lock() {
-					info!("------------ Downloaded headers in queue ------------");
-
-					let mut sorted: Vec<_> = fastsync_headers.iter().collect();
-					sorted.sort_by_key(|a| a.0);
-					for (key, value) in sorted.iter() {
-						info!(
-							"Start height: {:?}, Headers: {:?}, offset: {:?}",
-							key,
-							value.headers.len(),
-							value.offset
-						);
-					}
-					drop(fastsync_headers);
-					info!("------------------ <-------------> ------------------");
-				}
-
-				if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
-					//reset if all queue items are processed or get stuck because items in queue can not be added
-					if fastsync_headers.len() == 0 || tochain_attemps > 10 {
-						download_headers = true;
-						offset = 0;
-						tochain_attemps = 0;
-						header_syncs = HashMap::new();
-						fastsync_headers.clear();
 						drop(fastsync_headers);
-						continue;
+						info!("------------------ <-------------> ------------------");
 					}
 
-					let current_height = chainsync.adapter.total_header_height().unwrap();
-					if let Some(fastsync_header) = fastsync_headers.get(&(current_height + 1)) {
-						let headers = fastsync_header.headers.clone();
-						let peer_info = fastsync_header.peer_info.clone();
-
-						match chainsync
-							.adapter
-							.headers_received(&headers.clone(), &peer_info.clone())
-						{
-							Ok(added) => {
-								if !added {
-									// if the peer sent us a block header that's intrinsically bad
-									// they are either mistaken or malevolent, both of which require a ban
-
-									chainsync
-										.ban_peer(
-											peer_info.addr,
-											p2p::types::ReasonForBan::BadBlockHeader,
-										)
-										.map_err(|e| {
-											let err: chain::Error = chain::ErrorKind::Other(
-												format!("ban peer error :{:?}", e),
-											)
-											.into();
-											err
-										})
-										.unwrap();
-								}
-								fastsync_headers.remove(&(current_height + 1));
-							}
-							Err(err) => {
-								error!("chainsync {:?}", err);
-							}
+					if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
+						//reset if all queue items are processed or get stuck because items in queue can not be added
+						if fastsync_headers.len() == 0 || tochain_attemps > 10 {
+							download_headers = true;
+							offset = 0;
+							tochain_attemps = 0;
+							header_syncs = HashMap::new();
+							fastsync_headers.clear();
+							drop(fastsync_headers);
+							continue;
 						}
-					} else {
-						tochain_attemps += 1;
-					}
-					//end if fastsync_header
-				}
-			}
 
-			match self.sync_state.status() {
-				SyncStatus::TxHashsetDownload { .. }
-				| SyncStatus::TxHashsetSetup
-				| SyncStatus::TxHashsetRangeProofsValidation { .. }
-				| SyncStatus::TxHashsetKernelsValidation { .. }
-				| SyncStatus::TxHashsetSave
-				| SyncStatus::TxHashsetDone => check_state_sync = true,
-				SyncStatus::AwaitingPeers(_) => {
-					//apply only on startup
-					if !download_headers {
-						let sync_head = self.chain.get_sync_head().unwrap();
-						info!(
+						let current_height = chainsync.adapter.total_header_height().unwrap();
+						if let Some(fastsync_header) = fastsync_headers.get(&(current_height + 1)) {
+							let headers = fastsync_header.headers.clone();
+							let peer_info = fastsync_header.peer_info.clone();
+
+							match chainsync
+								.adapter
+								.headers_received(&headers.clone(), &peer_info.clone())
+							{
+								Ok(added) => {
+									if !added {
+										// if the peer sent us a block header that's intrinsically bad
+										// they are either mistaken or malevolent, both of which require a ban
+
+										chainsync
+											.ban_peer(
+												peer_info.addr,
+												p2p::types::ReasonForBan::BadBlockHeader,
+											)
+											.map_err(|e| {
+												let err: chain::Error = chain::ErrorKind::Other(
+													format!("ban peer error :{:?}", e),
+												)
+												.into();
+												err
+											})
+											.unwrap();
+									}
+									fastsync_headers.remove(&(current_height + 1));
+								}
+								Err(err) => {
+									error!("chainsync {:?}", err);
+								}
+							}
+						} else {
+							tochain_attemps += 1;
+						}
+						//end if fastsync_header
+					}
+				}
+
+				//warn!("4, before sync_match");
+
+				match self.sync_state.status() {
+					SyncStatus::TxHashsetDownload { .. }
+					| SyncStatus::TxHashsetSetup
+					| SyncStatus::TxHashsetRangeProofsValidation { .. }
+					| SyncStatus::TxHashsetKernelsValidation { .. }
+					| SyncStatus::TxHashsetSave
+					| SyncStatus::TxHashsetDone => check_state_sync = true,
+					SyncStatus::AwaitingPeers(_) => {
+						//apply only on startup
+						if !download_headers {
+							let sync_head = self.chain.get_sync_head().unwrap();
+							info!(
         					"sync: initial transition to HeaderSync. sync_head: {} at {}, resetting to: {} at {}",
         					sync_head.hash(),
         					sync_head.height,
         					header_head.hash(),
         					header_head.height,
         				);
-						let _ = self.chain.reset_sync_head();
+							let _ = self.chain.reset_sync_head();
 
-						// Rebuild the sync MMR to match our updated sync_head.
-						let _ = self.chain.rebuild_sync_mmr(&header_head);
-						//asking peers for headers and start header sync tasks
-						download_headers = true;
-					}
-				}
-				_ => {
-					// skip body sync if header chain is not synced.
-					if header_head.height < highest_network_height {
-						continue;
-					}
-
-					//if all headers synced close pending header sync tasks and stop aksing peers
-					download_headers = false;
-					for header_sync in header_syncs.clone() {
-						let _ = header_sync.1.send(false);
-					}
-
-					let check_run = match body_sync.check_run(&head, highest_network_height) {
-						Ok(v) => v,
-						Err(e) => {
-							error!("check_run failed: {:?}", e);
-							continue;
+							// Rebuild the sync MMR to match our updated sync_head.
+							let _ = self.chain.rebuild_sync_mmr(&header_head);
+							//asking peers for headers and start header sync tasks
+							download_headers = true;
 						}
-					};
+					}
+					_ => {
+						// skip body sync if header chain is not synced.
+						warn!(
+							">>> DEFAULT_CASE portion of sync_state, continue case met. header_height({}), highest_network_height({})",
+							header_head.height,
+							highest_network_height
+						);
+						if header_head.height < highest_network_height {
+							match self.sync_state.status() {
+								SyncStatus::BodySync { .. } => {
+									if !self.chain.clear_orphans() {
+										error!(
+										"Failed to fully clear ophan hashmap, continuing anyway!"
+									);
+									}
+									match self.chain.reset_sync_head() {
+										Ok(_) => (),
+										Err(e) => {
+											error!(
+												"Unable to reset sync head, error: {:?}",
+												e.to_string()
+											);
+										}
+									}
+									warn!(
+										"<<< SHOULD BE RESETTING sync_state({:?})",
+										self.sync_state.status()
+									);
+									//warn!("5, before continue outer loop sync_state({:?})", self.sync_state.status());
+									download_headers = true;
+									continue 'outer_loop;
+									//								self.sync_state.update(SyncStatus::HeaderSync { current_height: header_head.height, highest_height: highest_network_height })
+								}
+								_ => {}
+							}
+							continue 'inner_loop;
+						}
+						//warn!("6, afer match, default case!");
 
-					if check_run {
-						check_state_sync = true;
+						//if all headers synced close pending header sync tasks and stop aksing peers
+						download_headers = false;
+						for header_sync in header_syncs.clone() {
+							let _ = header_sync.1.send(false);
+						}
+
+						warn!("7, before check_run!");
+						let check_run = match body_sync.check_run(&head, highest_network_height) {
+							Ok(v) => v,
+							Err(e) => {
+								error!("check_run failed: {:?}", e);
+								continue 'inner_loop;
+							}
+						};
+
+						if check_run {
+							check_state_sync = true;
+						}
 					}
 				}
-			}
 
-			if check_state_sync {
-				state_sync.check_run(&header_head, &head, &tail, highest_network_height);
+				warn!("8, before check_state_sync!");
+				if check_state_sync {
+					state_sync.check_run(&header_head, &head, &tail, highest_network_height);
+				}
 			}
-		}
+		} // outer loop
 	}
 
 	/// Whether we're currently syncing the chain or we're fully caught up and

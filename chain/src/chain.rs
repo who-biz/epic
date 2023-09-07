@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Orphan pool size is limited by MAX_ORPHAN_SIZE
-pub const MAX_ORPHAN_SIZE: usize = 200;
+pub const MAX_ORPHAN_SIZE: usize = 60;
 
 /// When evicting, very old orphans are evicted first
 const MAX_ORPHAN_AGE_SECS: u64 = 300;
@@ -131,6 +131,14 @@ impl OrphanBlockPool {
 		height_idx
 			.remove(height)
 			.map(|hs| hs.iter().filter_map(|h| orphans.remove(h)).collect())
+	}
+
+	pub fn clear(&self) -> bool {
+		let mut orphans = self.orphans.write();
+		let mut height_idx = self.height_idx.write();
+		orphans.clear();
+		height_idx.clear();
+		return orphans.is_empty() && height_idx.is_empty();
 	}
 
 	pub fn contains(&self, hash: &Hash) -> bool {
@@ -506,6 +514,11 @@ impl Chain {
 				self.orphans.len(),
 			);
 		}
+	}
+
+	/// Clears orphan HashMap, returns false if either is not empty afterward.
+	pub fn clear_orphans(&self) -> bool {
+		self.orphans.clear()
 	}
 
 	/// For the given commitment find the unspent output and return the

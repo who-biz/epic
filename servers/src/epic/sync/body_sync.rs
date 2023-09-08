@@ -152,12 +152,12 @@ impl BodySync {
 
 	// Should we run block body sync and ask for more full blocks?
 	fn body_sync_due(&mut self) -> Result<bool, chain::Error> {
-		warn!("body_sync_due, 1");
+		//warn!("body_sync_due, 1");
 		let blocks_received = self.blocks_received()?;
 
 		// some blocks have been requested
 		if self.blocks_requested > 0 {
-			warn!("body_sync_due, 2");
+			//	warn!("body_sync_due, 2");
 			// but none received since timeout, ask again
 			let timeout = Utc::now() > self.receive_timeout;
 			if timeout && (blocks_received <= self.prev_blocks_received) {
@@ -165,13 +165,13 @@ impl BodySync {
 					"body_sync: expecting {} more blocks and none received for a while",
 					self.blocks_requested,
 				);
-				warn!("body_sync_due, 2a");
+				//		warn!("body_sync_due, 2a");
 				return Ok(true);
 			}
 		}
 
 		if blocks_received > self.prev_blocks_received {
-			warn!("body_sync_due, 3");
+			//	warn!("body_sync_due, 3");
 
 			// some received, update for next check
 			self.receive_timeout = Utc::now() + Duration::seconds(1);
@@ -183,7 +183,7 @@ impl BodySync {
 
 		// off by one to account for broadcast adding a couple orphans
 		if self.blocks_requested < 2 {
-			warn!("body_sync_due, 4");
+			//warn!("body_sync_due, 4");
 			// no pending block requests, ask more
 			debug!("body_sync: no pending block request, asking more");
 			return Ok(true);

@@ -464,9 +464,14 @@ impl Chain {
 	/// Check for orphans, once a block is successfully added
 	fn check_orphans(&self, mut height: u64) {
 		let initial_height = height;
-
+		let mut loop_iter = 0;
 		// Is there an orphan in our orphans that we can now process?
 		loop {
+			// TODO: find a way to manage this loop's resource consumption
+			// it executes hundreds of times, and our chain::process_block does not exit
+			// until this function terminates
+			loop_iter += 1;
+			warn!("loop iterations in check_orphans ({})", loop_iter);
 			trace!(
 				"check_orphans: at {}, # orphans {}",
 				height,
@@ -478,7 +483,10 @@ impl Chain {
 
 			if let Some(orphans) = self.orphans.remove_by_height(&height) {
 				let orphans_len = orphans.len();
+				let mut subloop_iter = 0;
 				for (i, orphan) in orphans.into_iter().enumerate() {
+					subloop_iter += 1;
+					warn!("sub_loop iterations in check_orphans ({})", subloop_iter);
 					debug!(
 						"check_orphans: get block {} at {}{}",
 						orphan.block.hash(),
@@ -500,6 +508,9 @@ impl Chain {
 				if orphan_accepted {
 					// We accepted a block, so see if we can accept any orphans
 					height = height_accepted + 1;
+					/*if loop_iter > 5 {
+						break;
+					}*/
 					continue;
 				}
 			}

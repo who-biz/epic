@@ -129,11 +129,6 @@ impl SyncRunner {
 		let mut download_headers = false;
 		let mut highest_network_height = 0;
 
-		// Wait for connections reach at least MIN_PEERS
-		if let Err(e) = self.wait_for_min_peers() {
-			error!("wait_for_min_peers failed: {:?}", e);
-		}
-
 		let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
 		let mut offset = 0;
 		let mut tochain_attemps = 0;
@@ -142,21 +137,27 @@ impl SyncRunner {
 			Arc::new(std::sync::Mutex::new(HashMap::new()));
 
 		let chainsync = self.peers.clone();
+
+		// Our 3 main sync stages
+		// fast header sync
+		//let mut header_syncs: HashMap<String, Rc<RefCell<HeaderSync>>> = HashMap::new();
+		let mut state_sync = StateSync::new(
+			self.sync_state.clone(),
+			self.peers.clone(),
+			self.chain.clone(),
+		);
+
 		'outer_loop: loop {
 			//			warn!("1.5, beginning of outer loop");
+
+			// Wait for connections reach at least MIN_PEERS
+			if let Err(e) = self.wait_for_min_peers() {
+				error!("wait_for_min_peers failed: {:?}", e);
+			}
 
 			//let start_time = Utc::now();
 			//warn!("1, before start of outer loop");
 			let mut body_sync = BodySync::new(
-				self.sync_state.clone(),
-				self.peers.clone(),
-				self.chain.clone(),
-			);
-
-			// Our 3 main sync stages
-			// fast header sync
-			//let mut header_syncs: HashMap<String, Rc<RefCell<HeaderSync>>> = HashMap::new();
-			let mut state_sync = StateSync::new(
 				self.sync_state.clone(),
 				self.peers.clone(),
 				self.chain.clone(),
@@ -435,11 +436,11 @@ impl SyncRunner {
 					}
 					_ => {
 						// skip body sync if header chain is not synced.
-						warn!(
+						/*warn!(
 							">>> DEFAULT_CASE portion of sync_state, continue case met. header_height({}), highest_network_height({})",
 							header_head.height,
 							highest_network_height
-						);
+						);*/
 						if header_head.height < highest_network_height {
 							match self.sync_state.status() {
 								SyncStatus::BodySync { .. } => {
@@ -448,7 +449,7 @@ impl SyncRunner {
 										"Failed to fully clear ophan hashmap, continuing anyway!"
 									);
 									}
-									match self.chain.reset_sync_head() {
+									/*match self.chain.reset_sync_head() {
 										Ok(_) => (),
 										Err(e) => {
 											error!(
@@ -456,15 +457,16 @@ impl SyncRunner {
 												e.to_string()
 											);
 										}
-									}
+									}*/
+									self.sync_state.update(SyncStatus::AwaitingPeers(false));
 									warn!(
-										"<<< SHOULD BE RESETTING sync_state({:?})",
-										self.sync_state.status()
+										"<<< SHOULD BE RESETTING sync_state({:?}), download_headers({})",
+										self.sync_state.status(),
+										download_headers
 									);
+									download_headers = false;
 									//warn!("5, before continue outer loop sync_state({:?})", self.sync_state.status());
-									download_headers = true;
 									continue 'outer_loop;
-									//								self.sync_state.update(SyncStatus::HeaderSync { current_height: header_head.height, highest_height: highest_network_height })
 								}
 								_ => {}
 							}
@@ -478,7 +480,7 @@ impl SyncRunner {
 							let _ = header_sync.1.send(false);
 						}
 
-						warn!("7, before check_run!");
+						//warn!("7, before check_run!");
 						let check_run = match body_sync.check_run(&head, highest_network_height) {
 							Ok(v) => v,
 							Err(e) => {
@@ -493,7 +495,7 @@ impl SyncRunner {
 					}
 				}
 
-				warn!("8, before check_state_sync!");
+				//warn!("8, before check_state_sync!");
 				if check_state_sync {
 					state_sync.check_run(&header_head, &head, &tail, highest_network_height);
 				}

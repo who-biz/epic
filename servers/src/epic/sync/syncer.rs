@@ -128,7 +128,6 @@ impl SyncRunner {
 
 		let mut download_headers = false;
 		let mut highest_network_height = 0;
-		let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
 		let mut offset = 0;
 		let mut tochain_attemps = 0;
 		let mut check_state_sync = false;
@@ -143,6 +142,8 @@ impl SyncRunner {
 		);
 
 		'outer_loop: loop {
+			let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
+
 			//			warn!("1.5, beginning of outer loop");
 
 			// Wait for connections reach at least MIN_PEERS
@@ -458,19 +459,19 @@ impl SyncRunner {
 											);
 										}
 									}
-									self.sync_state.update(SyncStatus::HeaderSync {
+									/*self.sync_state.update(SyncStatus::HeaderSync {
 										current_height: header_head.height,
 										highest_height: highest_network_height,
-									});
+									});*/
 									warn!(
 										"<<< SHOULD BE RESETTING sync_state({:?}), download_headers({})",
 										self.sync_state.status(),
 										download_headers
 									);
-									let _ = self.chain.rebuild_sync_mmr(&header_head);
+									//let _ = self.chain.rebuild_sync_mmr(&header_head);
 									//asking peers for headers and start header sync tasks
 									download_headers = true;
-									check_state_sync = true;
+									//check_state_sync = true;
 									//warn!("5, before continue outer loop sync_state({:?})", self.sync_state.status());
 									continue 'outer_loop;
 								}

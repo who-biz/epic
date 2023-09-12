@@ -96,7 +96,10 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// Quick pow validation. No point proceeding if this is invalid.
 	// We want to do this before we add the block to the orphan pool so we
 	// want to do this now and not later during header validation.
-	validate_pow_only(&b.header, ctx)?;
+
+	if !ctx.opts.contains(Options::SKIP_POW) {
+		validate_pow_only(&b.header, ctx)?;
+	}
 
 	let head = ctx.batch.head()?;
 	let prev = prev_header_store(&b.header, &mut ctx.batch)?;

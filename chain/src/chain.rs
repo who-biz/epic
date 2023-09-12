@@ -133,6 +133,8 @@ impl OrphanBlockPool {
 			.map(|hs| hs.iter().filter_map(|h| orphans.remove(h)).collect())
 	}
 
+	//fn check_orphans_by_height(&self, height: &u64)
+
 	pub fn clear(&self) -> bool {
 		let mut orphans = self.orphans.write();
 		let mut height_idx = self.height_idx.write();
@@ -286,10 +288,23 @@ impl Chain {
 	/// Processes a single block, then checks for orphans, processing
 	/// those as well if they're found
 	pub fn process_block(&self, b: Block, opts: Options) -> Result<Option<Tip>, Error> {
-		let height = b.header.height;
+		let block_height = b.header.height;
+		let orphan_height;
 		let res = self.process_block_single(b, opts);
-		if res.is_ok() {
-			self.check_orphans(height + 1);
+		match res {
+			Ok(_) => {
+				orphan_height = block_height + 1;
+			}
+			_ => {
+				orphan_height = self.head()?.height + 1;
+			}
+		}
+		let orphans = self.check_orphans(orphan_height);
+		if !orphans.is_empty() {
+			for orphan in orphans {
+				let res = self.process_block_single(orphan.block, orphan.opts);
+				return res;
+			}
 		}
 		res
 	}
@@ -462,69 +477,69 @@ impl Chain {
 	}
 
 	/// Check for orphans, once a block is successfully added
-	fn check_orphans(&self, mut height: u64) {
-		let initial_height = height;
-		let mut loop_iter = 0;
+	fn check_orphans(&self, height: u64) -> Vec<Orphan> {
+		warn!("check_orphans called");
+		//let initial_height = height;
+		//let mut loop_iter = 0;
+		let mut orphans_result: Vec<Orphan> = Vec::new();
 		// Is there an orphan in our orphans that we can now process?
-		loop {
-			// TODO: find a way to manage this loop's resource consumption
-			// it executes hundreds of times, and our chain::process_block does not exit
-			// until this function terminates
-			loop_iter += 1;
-			warn!("loop iterations in check_orphans ({})", loop_iter);
-			trace!(
-				"check_orphans: at {}, # orphans {}",
-				height,
-				self.orphans.len(),
-			);
+		//loop {
+		// TODO: find a way to manage this loop's resource consumption
+		// it executes hundreds of times, and our chain::process_block does not exit
+		// until this function terminates
+		//	loop_iter += 1;
+		//	warn!("loop iterations in check_orphans ({})", loop_iter);
+		trace!(
+			"check_orphans: at {}, # orphans {}",
+			height,
+			self.orphans.len(),
+		);
 
-			let mut orphan_accepted = false;
-			let mut height_accepted = height;
+		//let mut orphan_accepted = false;
+		//let mut height_accepted = height;
 
-			if let Some(orphans) = self.orphans.remove_by_height(&height) {
-				let orphans_len = orphans.len();
-				let mut subloop_iter = 0;
-				for (i, orphan) in orphans.into_iter().enumerate() {
-					subloop_iter += 1;
-					warn!("sub_loop iterations in check_orphans ({})", subloop_iter);
-					debug!(
-						"check_orphans: get block {} at {}{}",
-						orphan.block.hash(),
-						height,
-						if orphans_len > 1 {
-							format!(", no.{} of {} orphans", i, orphans_len)
-						} else {
-							String::new()
-						},
-					);
-					let height = orphan.block.header.height;
-					let res = self.process_block_single(orphan.block, orphan.opts);
-					if res.is_ok() {
-						orphan_accepted = true;
-						height_accepted = height;
-					}
-				}
-
-				if orphan_accepted {
-					// We accepted a block, so see if we can accept any orphans
-					height = height_accepted + 1;
-					/*if loop_iter > 5 {
-						break;
-					}*/
-					continue;
-				}
+		if let Some(orphans) = self.orphans.remove_by_height(&height) {
+			let orphans_len = orphans.len();
+			let mut subloop_iter = 0;
+			for (i, orphan) in orphans.into_iter().enumerate() {
+				subloop_iter += 1;
+				warn!("sub_loop iterations in check_orphans ({})", subloop_iter);
+				debug!(
+					"check_orphans: get block {} at {}{}",
+					orphan.block.hash(),
+					height,
+					if orphans_len > 1 {
+						format!(", no.{} of {} orphans", i, orphans_len)
+					} else {
+						String::new()
+					},
+				);
+				//let height = orphan.block.header.height;
+				orphans_result.push(orphan);
+				/*let res = self.process_block_single(orphan.block, orphan.opts);
+				if res.is_ok() {
+					orphan_accepted = true;
+					height_accepted = height;
+				}*/
 			}
-			break;
-		}
 
-		if initial_height != height {
+			/*if orphan_accepted {
+				// We accepted a block, so see if we can accept any orphans
+				height = height_accepted + 1;
+				continue;
+			}*/
+		}
+		orphans_result
+		//}
+
+		/*if initial_height != height {
 			debug!(
 				"check_orphans: {} blocks accepted since height {}, remaining # orphans {}",
 				height - initial_height,
 				initial_height,
 				self.orphans.len(),
 			);
-		}
+		}*/
 	}
 
 	/// Clears orphan HashMap, returns false if either is not empty afterward.

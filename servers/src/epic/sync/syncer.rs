@@ -128,15 +128,10 @@ impl SyncRunner {
 
 		let mut download_headers = false;
 		let mut highest_network_height = 0;
-
 		let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
 		let mut offset = 0;
 		let mut tochain_attemps = 0;
-
-		let fastsync_header_queue: Arc<std::sync::Mutex<HashMap<u64, FastsyncHeaderQueue>>> =
-			Arc::new(std::sync::Mutex::new(HashMap::new()));
-
-		let chainsync = self.peers.clone();
+		let mut check_state_sync = false;
 
 		// Our 3 main sync stages
 		// fast header sync
@@ -165,6 +160,12 @@ impl SyncRunner {
 
 			// Main syncing loop
 			'inner_loop: loop {
+				let fastsync_header_queue: Arc<
+					std::sync::Mutex<HashMap<u64, FastsyncHeaderQueue>>,
+				> = Arc::new(std::sync::Mutex::new(HashMap::new()));
+
+				let chainsync = self.peers.clone();
+
 				//warn!("2, start of inner loop");
 				if self.stop_state.is_stopped() {
 					//close running header sync threads
@@ -217,7 +218,6 @@ impl SyncRunner {
 				let head = unwrap_or_restart_loop!(self.chain.head());
 				let tail = self.chain.tail().unwrap_or_else(|_| head.clone());
 				let header_head = unwrap_or_restart_loop!(self.chain.header_head());
-				let mut check_state_sync = false;
 				// run each sync stage, each of them deciding whether they're needed
 				// except for state sync that only runs if body sync return true (means txhashset is needed)
 				//add new header_sync peer if we found a new peer which is not in list
@@ -446,10 +446,10 @@ impl SyncRunner {
 								SyncStatus::BodySync { .. } => {
 									if !self.chain.clear_orphans() {
 										error!(
-										"Failed to fully clear ophan hashmap, continuing anyway!"
+										"Failed to fully clear orphan hashmap, continuing anyway!"
 									);
 									}
-									/*match self.chain.reset_sync_head() {
+									match self.chain.reset_sync_head() {
 										Ok(_) => (),
 										Err(e) => {
 											error!(
@@ -457,14 +457,20 @@ impl SyncRunner {
 												e.to_string()
 											);
 										}
-									}*/
-									self.sync_state.update(SyncStatus::AwaitingPeers(false));
+									}
+									self.sync_state.update(SyncStatus::HeaderSync {
+										current_height: header_head.height,
+										highest_height: highest_network_height,
+									});
 									warn!(
 										"<<< SHOULD BE RESETTING sync_state({:?}), download_headers({})",
 										self.sync_state.status(),
 										download_headers
 									);
-									download_headers = false;
+									let _ = self.chain.rebuild_sync_mmr(&header_head);
+									//asking peers for headers and start header sync tasks
+									download_headers = true;
+									check_state_sync = true;
 									//warn!("5, before continue outer loop sync_state({:?})", self.sync_state.status());
 									continue 'outer_loop;
 								}

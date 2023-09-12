@@ -21,6 +21,9 @@ use crate::chain::{self, SyncState, SyncStatus};
 use crate::core::core::hash::Hash;
 use crate::p2p;
 
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+
 pub struct BodySync {
 	chain: Arc<chain::Chain>,
 	peers: Arc<p2p::Peers>,
@@ -133,9 +136,12 @@ impl BodySync {
 
 			// reinitialize download tracking state
 			self.blocks_requested = 0;
-			self.receive_timeout = Utc::now() + Duration::seconds(4);
+			self.receive_timeout = Utc::now() + Duration::seconds(5);
 
-			let mut peers_iter = peers.iter().cycle();
+			let mut peer_vec = peers;
+			let mut rng = thread_rng();
+			peer_vec.shuffle(&mut rng);
+			let mut peers_iter = peer_vec.iter();
 			for hash in hashes_to_get.clone() {
 				if let Some(peer) = peers_iter.next() {
 					if let Err(e) = peer.send_block_request(*hash, chain::Options::SYNC) {

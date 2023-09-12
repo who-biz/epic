@@ -58,10 +58,11 @@ impl Peers {
 	/// Adds the peer to our internal peer mapping. Note that the peer is still
 	/// returned so the server can run it.
 	pub fn add_connected(&self, peer: Arc<Peer>) -> Result<(), Error> {
-		let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
+		let mut peers = self.peers.write();
+		/*let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
 			error!("add_connected: failed to get peers lock");
 			Error::Timeout
-		})?;
+		})?;*/
 		let peer_data = PeerData {
 			addr: peer.info.addr,
 			capabilities: peer.info.capabilities,
@@ -101,22 +102,24 @@ impl Peers {
 	/// and this attempt fails then return an error allowing the caller
 	/// to decide how best to handle this.
 	pub fn is_known(&self, addr: PeerAddr) -> Result<bool, Error> {
-		let peers = self.peers.try_read_for(LOCK_TIMEOUT).ok_or_else(|| {
+		let peers = self.peers.read();
+		/*let peers = self.peers.try_read_for(LOCK_TIMEOUT).ok_or_else(|| {
 			error!("is_known: failed to get peers lock");
 			Error::Internal
-		})?;
+		})?;*/
 		Ok(peers.contains_key(&addr))
 	}
 
 	/// Get vec of peers we are currently connected to.
 	pub fn connected_peers(&self) -> Vec<Arc<Peer>> {
-		let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
+		let peers = self.peers.read();
+		/*let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
 			Some(peers) => peers,
 			None => {
 				error!("connected_peers: failed to get peers lock");
 				return vec![];
 			}
-		};
+		};*/
 		let mut res = peers
 			.values()
 			.filter(|p| p.is_connected())
@@ -144,13 +147,14 @@ impl Peers {
 
 	/// Get a peer we're connected to by address.
 	pub fn get_connected_peer(&self, addr: PeerAddr) -> Option<Arc<Peer>> {
-		let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
+		let peers = self.peers.read();
+		/*let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
 			Some(peers) => peers,
 			None => {
 				error!("get_connected_peer: failed to get peers lock");
 				return None;
 			}
-		};
+		};*/
 		peers.get(&addr).map(|p| p.clone())
 	}
 
@@ -260,10 +264,11 @@ impl Peers {
 				peer.send_ban_reason(ban_reason)?;
 				peer.set_banned();
 				peer.stop();
-				let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
+				let mut peers = self.peers.write();
+				/*let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
 					error!("ban_peer: failed to get peers lock");
 					Error::PeerException
-				})?;
+				})?;*/
 				peers.remove(&peer.info.addr);
 				Ok(())
 			}
@@ -278,10 +283,11 @@ impl Peers {
 				debug!("Disconnect peer {}", peer_addr);
 				// setting peer status will get it removed at the next clean_peer
 				peer.stop();
-				let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
+				let mut peers = self.peers.write();
+				/*let mut peers = self.peers.try_write_for(LOCK_TIMEOUT).ok_or_else(|| {
 					error!("disconnect_peer: failed to get peers lock");
 					Error::PeerException
-				})?;
+				})?;*/
 				peers.remove(&peer.info.addr);
 				Ok(())
 			}
@@ -317,13 +323,14 @@ impl Peers {
 						obj_name, &p.info.addr, e
 					);
 
-					let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
+					let mut peers = self.peers.write();
+					/*let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
 						Some(peers) => peers,
 						None => {
 							error!("broadcast: failed to get peers lock");
 							break;
 						}
-					};
+					};*/
 					p.stop();
 					peers.remove(&p.info.addr);
 				}
@@ -377,13 +384,14 @@ impl Peers {
 		for p in self.connected_peers().iter() {
 			if let Err(e) = p.send_ping(total_difficulty.clone(), height, Utc::now().timestamp()) {
 				debug!("Error pinging peer {:?}: {:?}", &p.info.addr, e);
-				let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
+				let mut peers = self.peers.write();
+				/*let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
 					Some(peers) => peers,
 					None => {
 						error!("check_all: failed to get peers lock");
 						break;
 					}
-				};
+				};*/
 				p.stop();
 				peers.remove(&p.info.addr);
 			}
@@ -442,13 +450,14 @@ impl Peers {
 
 		// build a list of peers to be cleaned up
 		{
-			let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
+			let peers = self.peers.read();
+			/*let peers = match self.peers.try_read_for(LOCK_TIMEOUT) {
 				Some(peers) => peers,
 				None => {
 					error!("clean_peers: can't get peers lock");
 					return;
 				}
-			};
+			};*/
 			for peer in peers.values() {
 				if peer.is_banned() {
 					debug!("clean_peers {:?}, peer banned", peer.info.addr);
@@ -509,13 +518,14 @@ impl Peers {
 
 		// now clean up peer map based on the list to remove
 		{
-			let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
+			let mut peers = self.peers.write();
+			/*let mut peers = match self.peers.try_write_for(LOCK_TIMEOUT) {
 				Some(peers) => peers,
 				None => {
 					error!("clean_peers: failed to get peers lock");
 					return;
 				}
-			};
+			};*/
 			for addr in rm {
 				let _ = peers.get(&addr).map(|peer| peer.stop());
 				peers.remove(&addr);

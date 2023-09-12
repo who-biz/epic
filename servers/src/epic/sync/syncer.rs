@@ -143,7 +143,8 @@ impl SyncRunner {
 
 		'outer_loop: loop {
 			let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
-
+			let fastsync_header_queue: Arc<std::sync::Mutex<HashMap<u64, FastsyncHeaderQueue>>> =
+				Arc::new(std::sync::Mutex::new(HashMap::new()));
 			//			warn!("1.5, beginning of outer loop");
 
 			// Wait for connections reach at least MIN_PEERS
@@ -161,10 +162,6 @@ impl SyncRunner {
 
 			// Main syncing loop
 			'inner_loop: loop {
-				let fastsync_header_queue: Arc<
-					std::sync::Mutex<HashMap<u64, FastsyncHeaderQueue>>,
-				> = Arc::new(std::sync::Mutex::new(HashMap::new()));
-
 				let chainsync = self.peers.clone();
 
 				//warn!("2, start of inner loop");

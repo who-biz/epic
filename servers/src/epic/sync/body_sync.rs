@@ -144,7 +144,8 @@ impl BodySync {
 			peer_vec.shuffle(&mut rng);
 			// cycle for repeating list to match hashes_to_get length
 			// remove cycle() if you only want 1 request per peer
-			let mut peers_iter = peer_vec.iter().cycle();
+			let mut peers_iter = peer_vec.iter();
+			//let mut peers_iter = peer_vec.iter().cycle();
 			for hash in hashes_to_get.clone() {
 				if let Some(peer) = peers_iter.next() {
 					if let Err(e) = peer.send_block_request(*hash, chain::Options::SYNC) {

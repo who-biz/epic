@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::Instant;
+use std::convert::TryInto;
 
 use crate::chain::{self, BlockStatus, ChainAdapter, Options, SyncState, SyncStatus};
 use crate::common::hooks::{ChainEvents, NetEvents};

@@ -124,6 +124,19 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		peer_info: &PeerInfo,
 		opts: chain::Options,
 	) -> Result<bool, chain::Error> {
+		// TODO: guard against panic on unwrap, in case someone changes this constant
+		if self.sync_state.is_syncing() {
+			let orphan_size: u64 = chain::MAX_ORPHAN_SIZE.try_into().unwrap();
+			if b.header.height.clone() > (self.chain().head()?.height + (orphan_size * 2)) {
+				debug!(
+					"Ignoring full block {}, height({}), delivered during sync",
+					b.hash(),
+					b.header.height.clone()
+				);
+				return Ok(true);
+			}
+		}
+
 		if self.chain().block_exists(b.hash())? {
 			return Ok(true);
 		}
@@ -144,6 +157,17 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		cb: core::CompactBlock,
 		peer_info: &PeerInfo,
 	) -> Result<bool, chain::Error> {
+		if self.sync_state.is_syncing() {
+			let orphan_size: u64 = chain::MAX_ORPHAN_SIZE.try_into().unwrap();
+			if cb.header.height.clone() > (self.chain().head()?.height + (orphan_size * 2)) {
+				debug!(
+					"Ignoring compact block {}, height({}), delivered during sync",
+					cb.hash(),
+					cb.header.height.clone()
+				);
+				return Ok(true);
+			}
+		}
 		// No need to process this compact block if we have previously accepted the _full block_.
 		if self.chain().block_exists(cb.hash())? {
 			return Ok(true);

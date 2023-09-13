@@ -135,13 +135,13 @@ impl SyncRunner {
 		// Our 3 main sync stages
 		// fast header sync
 		//let mut header_syncs: HashMap<String, Rc<RefCell<HeaderSync>>> = HashMap::new();
-		let mut state_sync = StateSync::new(
-			self.sync_state.clone(),
-			self.peers.clone(),
-			self.chain.clone(),
-		);
 
 		'outer_loop: loop {
+			let mut state_sync = StateSync::new(
+				self.sync_state.clone(),
+				self.peers.clone(),
+				self.chain.clone(),
+			);
 			let mut header_syncs: HashMap<String, std::sync::mpsc::Sender<bool>> = HashMap::new();
 			let fastsync_header_queue: Arc<std::sync::Mutex<HashMap<u64, FastsyncHeaderQueue>>> =
 				Arc::new(std::sync::Mutex::new(HashMap::new()));
@@ -442,11 +442,11 @@ impl SyncRunner {
 						if header_head.height < highest_network_height {
 							match self.sync_state.status() {
 								SyncStatus::BodySync { .. } => {
-									if !self.chain.clear_orphans() {
+									/*if !self.chain.clear_orphans() {
 										error!(
 										"Failed to fully clear orphan hashmap, continuing anyway!"
 									);
-									}
+									}*/
 									match self.chain.reset_sync_head() {
 										Ok(_) => (),
 										Err(e) => {
@@ -457,7 +457,7 @@ impl SyncRunner {
 										}
 									}
 									/*self.sync_state.update(SyncStatus::HeaderSync {
-										current_height: header_head.height,
+										current_height: (header_head.height - 1),
 										highest_height: highest_network_height,
 									});*/
 									warn!(
@@ -469,6 +469,9 @@ impl SyncRunner {
 									//asking peers for headers and start header sync tasks
 									download_headers = true;
 									//check_state_sync = true;
+									//highest_network_height = 0;
+									offset = 0;
+									tochain_attemps = 0;
 									//warn!("5, before continue outer loop sync_state({:?})", self.sync_state.status());
 									continue 'outer_loop;
 								}

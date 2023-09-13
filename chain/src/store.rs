@@ -513,7 +513,7 @@ impl<'a> Iterator for DifficultyIter<'a> {
 				let mut first_time_flag: bool = true;
 				let mut prev_timespan: i64 = 60;
 				loop {
-					let mut prev_header = None;
+					let prev_header;
 
 					if let Some(ref batch) = self.batch {
 						prev_header = batch.get_previous_header(&head).ok();

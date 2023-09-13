@@ -21,6 +21,9 @@ use crate::chain::{self, SyncState, SyncStatus};
 use crate::core::core::hash::Hash;
 use crate::p2p;
 
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+
 pub struct BodySync {
 	chain: Arc<chain::Chain>,
 	peers: Arc<p2p::Peers>,
@@ -135,7 +138,13 @@ impl BodySync {
 			self.blocks_requested = 0;
 			self.receive_timeout = Utc::now() + Duration::seconds(6);
 
-			let mut peers_iter = peers.iter().cycle();
+			let mut peer_vec = peers;
+			let mut rng = thread_rng();
+			// randomly order peers
+			peer_vec.shuffle(&mut rng);
+			// cycle for repeating list to match hashes_to_get length
+			// remove cycle() if you only want 1 request per peer
+			let mut peers_iter = peer_vec.iter().cycle();
 			for hash in hashes_to_get.clone() {
 				if let Some(peer) = peers_iter.next() {
 					if let Err(e) = peer.send_block_request(*hash, chain::Options::SYNC) {

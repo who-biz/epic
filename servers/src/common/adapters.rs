@@ -635,8 +635,47 @@ impl NetToChainAdapter {
 
 		let bhash = b.hash();
 		let previous = self.chain().get_previous_header(&b.header);
+		let mut within_checkpointed_range = true;
+		let mut disable_checkpoints = false;
+		let mut options = opts;
 
-		match self.chain().process_block(b, opts) {
+		let checkpoints = BlockchainCheckpoints::new().checkpoints;
+
+		for c in &checkpoints {
+			if b.header.height == c.height {
+				if b.header.hash() == c.block_hash {
+					info!("Checkpoint successfully passed at height({})! Hashes: header({:?}), checkpoint({:?})",
+                               	        	c.height,
+                                       	 	b.header.hash(),
+                                       		c.block_hash
+                               		);
+				} else {
+					return Err(chain::ErrorKind::CheckpointFailure.into());
+				}
+			}
+			if b.header.height > checkpoints.last().unwrap().height {
+				within_checkpointed_range = false;
+			}
+		}
+
+		if self.config.disable_checkpoints.is_some() {
+			if self.config.disable_checkpoints.unwrap() {
+				disable_checkpoints = true;
+			}
+		}
+
+		if self.config.skip_pow_validation.is_some() {
+			if self.config.skip_pow_validation.unwrap() {
+				if within_checkpointed_range || disable_checkpoints {
+					// only skip pow validation if setting is toggled AND we are within checkpointed range
+					// OR if we have 'skip_pow_validation' AND 'disable_checkpoints' toggled
+					// fully validate pow for all other cases
+					options = chain::Options::SKIP_POW;
+				}
+			}
+		}
+
+		match self.chain().process_block(b, options) {
 			Ok(_) => {
 				self.validate_chain(bhash);
 				self.check_compact();
@@ -799,7 +838,7 @@ pub struct ChainToPoolAndNetAdapter {
 impl ChainAdapter for ChainToPoolAndNetAdapter {
 	fn block_accepted(&self, b: &core::Block, status: BlockStatus, opts: Options) {
 		// not broadcasting blocks received through sync
-		if !opts.contains(chain::Options::SYNC) {
+		if !opts.contains(chain::Options::SYNC) && !opts.contains(chain::Options::SKIP_POW) {
 			for hook in &self.hooks {
 				hook.on_block_accepted(b, &status);
 			}

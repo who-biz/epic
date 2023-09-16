@@ -16,19 +16,17 @@
 //! events to consumers of those events.
 
 use crate::util::RwLock;
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::Instant;
-use std::convert::TryInto;
 
 use crate::chain::{self, BlockStatus, ChainAdapter, Options, SyncState, SyncStatus};
 use crate::common::hooks::{ChainEvents, NetEvents};
-use crate::common::types::{
-	BlockchainCheckpoints, ChainValidationMode, DandelionEpoch, ServerConfig,
-};
+use crate::common::types::{ChainValidationMode, DandelionEpoch, ServerConfig};
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::transaction::Transaction;
 use crate::core::core::{BlockHeader, BlockSums, CompactBlock};
@@ -333,27 +331,17 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		);
 
 		let mut ctx_option = Options::SYNC;
-		let mut within_checkpointed_range = true;
+		let mut within_checkpointed_range = false;
 		let mut disable_checkpoints = false;
 
-		let checkpoints = BlockchainCheckpoints::new().checkpoints;
-
 		for header in bhs {
-			for c in &checkpoints {
-				if header.height == c.height {
-					if header.hash() == c.block_hash {
-						info!("Checkpoint successfully passed at height({})! Hashes: header({:?}), checkpoint({:?})",
-                                	        	c.height,
-                                        	 	header.hash(),
-                                        		c.block_hash
-                                		);
-					} else {
-						return Err(chain::ErrorKind::CheckpointFailure.into());
-					}
+			match self.chain().check_header_against_checkpoints(header) {
+				Ok(in_range) => {
+					within_checkpointed_range = in_range;
 				}
-			}
-			if header.height > checkpoints.last().unwrap().height {
-				within_checkpointed_range = false;
+				Err(e) => {
+					return Err(e);
+				}
 			}
 		}
 
@@ -635,41 +623,24 @@ impl NetToChainAdapter {
 
 		let bhash = b.hash();
 		let previous = self.chain().get_previous_header(&b.header);
-		let mut within_checkpointed_range = true;
-		let mut disable_checkpoints = false;
+		let within_checkpointed_range;
 		let mut options = opts;
 
-		let checkpoints = BlockchainCheckpoints::new().checkpoints;
-
-		for c in &checkpoints {
-			if b.header.height == c.height {
-				if b.header.hash() == c.block_hash {
-					info!("Checkpoint successfully passed at height({})! Hashes: header({:?}), checkpoint({:?})",
-                               	        	c.height,
-                                       	 	b.header.hash(),
-                                       		c.block_hash
-                               		);
-				} else {
-					return Err(chain::ErrorKind::CheckpointFailure.into());
-				}
+		match self.chain().check_header_against_checkpoints(&b.header) {
+			Ok(in_range) => {
+				within_checkpointed_range = in_range;
 			}
-			if b.header.height > checkpoints.last().unwrap().height {
-				within_checkpointed_range = false;
-			}
-		}
-
-		if self.config.disable_checkpoints.is_some() {
-			if self.config.disable_checkpoints.unwrap() {
-				disable_checkpoints = true;
+			Err(e) => {
+				return Err(e);
 			}
 		}
 
 		if self.config.skip_pow_validation.is_some() {
 			if self.config.skip_pow_validation.unwrap() {
-				if within_checkpointed_range || disable_checkpoints {
-					// only skip pow validation if setting is toggled AND we are within checkpointed range
-					// OR if we have 'skip_pow_validation' AND 'disable_checkpoints' toggled
-					// fully validate pow for all other cases
+				if within_checkpointed_range {
+					// only skip_pow_validation if setting is toggled AND we are within checkpointed range
+					// fully validate pow for all other cases, no 'disable_checkpoints' effect here,
+					// unlike the mechanics in header_received() above
 					options = chain::Options::SKIP_POW;
 				}
 			}

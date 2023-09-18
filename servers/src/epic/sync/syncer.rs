@@ -443,11 +443,16 @@ impl SyncRunner {
 										);
 									}
 								}
+								{
+									if !self.chain.clear_orphans() {
+										error!(
+											"Failed to fully clear ophan hashmap, continuing anyway!"
+										);
+									}
+								} // scope for RwLock
 							}
 							_ => {}
 						}
-						// TODO: toggle below if we are in BodySync for this default case
-						//download_headers = true;
 						continue;
 					}
 

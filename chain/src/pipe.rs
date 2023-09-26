@@ -114,7 +114,7 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// Process the header for the block.
 	// Note: We still want to process the full block if we have seen this header before
 	// as we may have processed it "header first" and not yet processed the full block.
-	process_block_header(&b.header, ctx)?;
+	//	process_block_header(&b.header, ctx)?;
 
 	// Validate the block itself, make sure it is internally consistent.
 	// Use the verifier_cache for verifying rangeproofs and kernel signatures.

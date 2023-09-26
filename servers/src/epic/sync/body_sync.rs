@@ -114,7 +114,7 @@ impl BodySync {
 			.filter(|x| {
 				// only ask for blocks that we have not yet processed
 				// either successfully stored or in our orphan list
-				!self.chain.get_block(x).is_ok() && !self.chain.is_orphan(x)
+				!self.chain.get_block(x).is_ok()
 			})
 			.take(block_count)
 			.collect::<Vec<_>>();

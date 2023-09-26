@@ -618,6 +618,8 @@ impl NetToChainAdapter {
 		peer_info: &PeerInfo,
 		opts: chain::Options,
 	) -> Result<bool, chain::Error> {
+		let start = Utc::now();
+		warn!("start time = ({:?})", start);
 		// We cannot process blocks earlier than the horizon so check for this here.
 		{
 			let head = self.chain().head()?;
@@ -628,7 +630,8 @@ impl NetToChainAdapter {
 				return Ok(true);
 			}
 		}
-
+		let mut timesince = Utc::now();
+		warn!("time diff 1 = ({:?})", timesince - start);
 		let bhash = b.hash();
 		let previous = self.chain().get_previous_header(&b.header);
 		let within_checkpointed_range;
@@ -657,6 +660,8 @@ impl NetToChainAdapter {
 			}
 		}
 
+		timesince = Utc::now();
+		warn!("time diff 2 = ({:?})", timesince - start);
 		if self.config.skip_pow_validation.is_some() {
 			if self.config.skip_pow_validation.unwrap() {
 				if within_checkpointed_range || disable_checkpoints {
@@ -669,6 +674,9 @@ impl NetToChainAdapter {
 			}
 		}
 
+		timesince = Utc::now();
+		warn!("time diff 3 = ({:?})", timesince - start);
+
 		match self.chain().process_block(b, options) {
 			Ok(_) => {
 				self.validate_chain(bhash);
@@ -680,6 +688,8 @@ impl NetToChainAdapter {
 				Ok(false)
 			}
 			Err(e) => {
+				timesince = Utc::now();
+				warn!("time diff 4 = ({:?})", timesince - start);
 				match e.kind() {
 					chain::ErrorKind::Orphan => {
 						if let Ok(previous) = previous {
@@ -688,12 +698,16 @@ impl NetToChainAdapter {
 								&& !self.sync_state.is_syncing()
 							{
 								debug!("process_block: received an orphan block, checking the parent: {:}", previous.hash());
+								timesince = Utc::now();
+								warn!("time diff 5a = ({:?})", timesince - start);
 								self.request_block(&previous, peer_info, chain::Options::NONE)
 							}
 						}
 						Ok(true)
 					}
 					_ => {
+						timesince = Utc::now();
+						warn!("time diff 5b = ({:?})", timesince - start);
 						debug!(
 							"process_block: block {} refused by chain: {}",
 							bhash,

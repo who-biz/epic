@@ -33,8 +33,10 @@ use crate::types::{
 	BlockStatus, BlockchainCheckpoints, ChainAdapter, CommitPos, NoStatus, Options, Tip,
 	TxHashsetWriteStatus,
 };
+
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::RwLock;
+use chrono::Utc;
 use epic_store::Error::NotFoundErr;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -45,7 +47,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Orphan pool size is limited by MAX_ORPHAN_SIZE
-pub const MAX_ORPHAN_SIZE: usize = 200;
+pub const MAX_ORPHAN_SIZE: usize = 60;
 
 /// When evicting, very old orphans are evicted first
 const MAX_ORPHAN_AGE_SECS: u64 = 300;
@@ -286,10 +288,19 @@ impl Chain {
 
 	/// Processes a single block, then checks for orphans, processing
 	/// those as well if they're found
+
+	/// Processes a single block, then checks for orphans, processing
+	/// those as well if they're found
 	pub fn process_block(&self, b: Block, opts: Options) -> Result<Option<Tip>, Error> {
+		let start = Utc::now();
+		warn!("time diff 1 in process_block ({:?})", start);
 		let block_height = b.header.height;
 		let orphan_height;
+		let mut timesince = Utc::now();
+		warn!("time diff 2 in process_block ({:?})", timesince - start);
 		let mut res = self.process_block_single(b, opts);
+		timesince = Utc::now();
+		warn!("time diff 3 in process_block ({:?})", timesince - start);
 		match res {
 			Ok(_) => {
 				orphan_height = block_height + 1;
@@ -298,12 +309,18 @@ impl Chain {
 				orphan_height = self.head()?.height + 1;
 			}
 		}
+		timesince = Utc::now();
+		warn!("time diff 4 in process_block ({:?})", timesince - start);
 		let orphans = self.check_orphans(orphan_height);
 		if !orphans.is_empty() {
 			for orphan in orphans {
+				timesince = Utc::now();
+				warn!("time diff 5 in process_block ({:?})", timesince - start);
 				res = self.process_block_single(orphan.block, orphan.opts);
 			}
 		}
+		timesince = Utc::now();
+		warn!("time diff 6 in process_block ({:?})", timesince - start);
 		res
 	}
 
@@ -328,84 +345,154 @@ impl Chain {
 		}
 	}
 
+	/// Quick check for "known" duplicate block up to and including current chain head.
+	/// Returns an error if this block is "known".
+	pub fn is_known(&self, header: &BlockHeader) -> Result<(), Error> {
+		let head = self.head()?;
+		if head.hash() == header.hash() {
+			return Err(ErrorKind::Unfit("duplicate block".to_owned()).into());
+		}
+		if header.total_difficulty() <= head.total_difficulty {
+			if self.block_exists(header.hash())? {
+				debug!(
+					"Block {} at {} is unfit at this time, duplicate block",
+					header.hash(),
+					header.height,
+				);
+				return Err(ErrorKind::Unfit("duplicate block".to_owned()).into());
+			}
+		}
+		Ok(())
+	}
+
+	// Check if the provided block is an orphan.
+	// If block is an orphan add it to our orphan block pool for deferred processing.
+	// If this is the "next" block immediately following current head then not an orphan.
+	// Or if we have the previous full block then not an orphan.
+	fn check_orphan(&self, block: &Block, opts: Options) -> Result<(), Error> {
+		let head = self.head()?;
+		let is_next = block.header.prev_hash == head.last_block_h;
+		if is_next || self.block_exists(block.header.prev_hash)? {
+			return Ok(());
+		}
+
+		let block_hash = block.hash();
+		let orphan = Orphan {
+			block: block.clone(),
+			opts,
+			added: Instant::now(),
+		};
+		self.orphans.add(orphan);
+
+		debug!(
+			"is_orphan: {:?}, # orphans {}{}",
+			block_hash,
+			self.orphans.len(),
+			if self.orphans.len_evicted() > 0 {
+				format!(", # evicted {}", self.orphans.len_evicted())
+			} else {
+				String::new()
+			},
+		);
+
+		Err(ErrorKind::Orphan.into())
+	}
+
 	/// Attempt to add a new block to the chain.
 	/// Returns true if it has been added to the longest chain
 	/// or false if it has added to a fork (or orphan?).
 	fn process_block_single(&self, b: Block, opts: Options) -> Result<Option<Tip>, Error> {
+		// Process the header first.
+		// If invalid then fail early.
+		// If valid then continue with block processing with header_head committed to db etc.
+
+		let start = Utc::now();
+		warn!("start time in process_block_single ({:?})", start);
+
+		self.process_block_header(&b.header, opts)?;
+
+		let mut timesince = Utc::now();
+		warn!(
+			"time diff 1 in process_block_single ({:?})",
+			timesince - start
+		);
+
+		// Check if we already know about this full block.
+		self.is_known(&b.header)?;
+
+		timesince = Utc::now();
+		warn!(
+			"time diff 2 in process_block_single ({:?})",
+			timesince - start
+		);
+
+		// Check if this block is an orphan.
+		// Only do this once we know the header PoW is valid.
+		self.check_orphan(&b, opts)?;
+
+		timesince = Utc::now();
+		warn!(
+			"time diff 3 in process_block_single ({:?})",
+			timesince - start
+		);
+
 		let (maybe_new_head, prev_head) = {
+			timesince = Utc::now();
+			warn!(
+				"time diff 4 in process_block_single ({:?})",
+				timesince - start
+			);
+
 			let mut header_pmmr = self.header_pmmr.write();
 			let mut txhashset = self.txhashset.write();
+			timesince = Utc::now();
+			warn!(
+				"time diff 4b in process_block_single ({:?})",
+				timesince - start
+			);
 			let batch = self.store.batch()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut header_pmmr, &mut txhashset)?;
+			timesince = Utc::now();
+			warn!(
+				"time diff 4c in process_block_single ({:?})",
+				timesince - start
+			);
 
 			let prev_head = ctx.batch.head()?;
 
-			let maybe_new_head = pipe::process_block(&b, &mut ctx);
+			let maybe_new_head = pipe::process_block(&b, &mut ctx)?;
+
+			timesince = Utc::now();
+			warn!(
+				"time diff 4d in process_block_single ({:?})",
+				timesince - start
+			);
 
 			// We have flushed txhashset extension changes to disk
 			// but not yet committed the batch.
 			// A node shutdown at this point can be catastrophic...
 			// We prevent this via the stop_lock (see above).
-			if maybe_new_head.is_ok() {
-				ctx.batch.commit()?;
-			}
+			ctx.batch.commit()?;
 
+			timesince = Utc::now();
+			warn!(
+				"time diff 4e in process_block_single ({:?})",
+				timesince - start
+			);
 			// release the lock and let the batch go before post-processing
 			(maybe_new_head, prev_head)
 		};
 
-		match maybe_new_head {
-			Ok(head) => {
-				let status = self.determine_status(head.clone(), prev_head);
+		let status = self.determine_status(maybe_new_head.clone(), prev_head);
+		// notifying other parts of the system of the update
+		self.adapter.block_accepted(&b, status, opts);
+		timesince = Utc::now();
+		warn!(
+			"time diff 5 in process_block_single ({:?})",
+			timesince - start
+		);
 
-				// notifying other parts of the system of the update
-				self.adapter.block_accepted(&b, status, opts);
-
-				Ok(head)
-			}
-			Err(e) => match e.kind() {
-				ErrorKind::Orphan => {
-					let block_hash = b.hash();
-					let orphan = Orphan {
-						block: b,
-						opts: opts,
-						added: Instant::now(),
-					};
-
-					self.orphans.add(orphan);
-
-					debug!(
-						"process_block: orphan: {:?}, # orphans {}{}",
-						block_hash,
-						self.orphans.len(),
-						if self.orphans.len_evicted() > 0 {
-							format!(", # evicted {}", self.orphans.len_evicted())
-						} else {
-							String::new()
-						},
-					);
-					Err(ErrorKind::Orphan.into())
-				}
-				ErrorKind::Unfit(ref msg) => {
-					debug!(
-						"Block {} at {} is unfit at this time: {}",
-						b.hash(),
-						b.header.height,
-						msg
-					);
-					Err(ErrorKind::Unfit(msg.clone()).into())
-				}
-				_ => {
-					info!(
-						"Rejected block {} at {}: {:?}",
-						b.hash(),
-						b.header.height,
-						e
-					);
-					Err(ErrorKind::Other(format!("{:?}", e)).into())
-				}
-			},
-		}
+		Ok(maybe_new_head)
 	}
 
 	/// Process a block header received during "header first" propagation.

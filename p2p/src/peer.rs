@@ -369,7 +369,7 @@ impl Peer {
 	pub fn send_header_fastsync_request(
 		&self,
 		locator: Vec<Hash>,
-		offset: u8,
+		offset: u64,
 	) -> Result<(), Error> {
 		//TODO: maybe handle errors
 		self.send(
@@ -574,7 +574,7 @@ impl ChainAdapter for TrackingAdapter {
 	fn locate_headers(
 		&self,
 		locator: &[Hash],
-		offset: &u8,
+		offset: &u64,
 	) -> Result<Vec<core::BlockHeader>, chain::Error> {
 		self.adapter.locate_headers(locator, offset)
 	}

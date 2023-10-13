@@ -324,7 +324,7 @@ impl ChainAdapter for DummyAdapter {
 		Ok(true)
 	}
 
-	fn locate_headers(&self, _: &[Hash], _: &u8) -> Result<Vec<core::BlockHeader>, chain::Error> {
+	fn locate_headers(&self, _: &[Hash], _: &u64) -> Result<Vec<core::BlockHeader>, chain::Error> {
 		Ok(vec![])
 	}
 

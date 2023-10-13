@@ -690,7 +690,7 @@ impl ChainAdapter for Peers {
 	fn locate_headers(
 		&self,
 		hs: &[Hash],
-		offset: &u8,
+		offset: &u64,
 	) -> Result<Vec<core::BlockHeader>, chain::Error> {
 		self.adapter.locate_headers(hs, offset)
 	}

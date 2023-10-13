@@ -26,13 +26,17 @@ use crate::epic::sync::header_sync::HeaderSync;
 use crate::epic::sync::state_sync::StateSync;
 use crate::p2p;
 use crate::util::StopState;
+use std::cell::Cell;
+use std::convert::TryInto;
 
 // all for FastsyncHeaderQueue
 use crate::core::core::BlockHeader;
 use crate::p2p::PeerInfo;
 use std::collections::HashMap;
+
+#[derive(Clone)]
 pub struct FastsyncHeaderQueue {
-	offset: u8,
+	offset: u64,
 	peer_info: PeerInfo,
 	headers: Vec<BlockHeader>,
 }
@@ -216,6 +220,7 @@ impl SyncRunner {
 			//add new header_sync peer if we found a new peer which is not in list
 
 			if download_headers {
+				let mut first_header_count = 0;
 				for peer in self.peers.clone().most_work_peers() {
 					let peer_addr = peer.info.addr.to_string();
 					if (peer
@@ -223,7 +228,7 @@ impl SyncRunner {
 						.capabilities
 						.contains(p2p::types::Capabilities::HEADER_FASTSYNC)
 						|| offset == 0) && peer.is_connected()
-						&& !peer.is_banned() && (header_head.height + (offset as u64 * 512))
+						&& !peer.is_banned() && (header_head.height + offset)
 						< highest_network_height
 					{
 						let mut remove_peer_from_sync = false;
@@ -296,7 +301,12 @@ impl SyncRunner {
 									continue;
 								}
 
+								let mut header_length: u64 = 0;
 								if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
+									warn!("feedback.headers.len({})", feedback.headers.len());
+									header_length =
+										<usize as TryInto<u64>>::try_into(feedback.headers.len())
+											.unwrap();
 									match fastsync_headers
 										.insert(feedback.headers[0].height, feedback)
 									{
@@ -308,8 +318,12 @@ impl SyncRunner {
 								} else {
 									error!("failed to get lock to insert headers to queue");
 								}
-
-								offset = offset + 1 as u8;
+								if offset < first_header_count {
+									offset += first_header_count;
+								} else {
+									offset += 512;
+								}
+								first_header_count = header_length;
 								header_syncs.insert(peer_addr.clone(), sender);
 							}
 						}
@@ -355,6 +369,7 @@ impl SyncRunner {
 					}
 
 					let current_height = chainsync.adapter.total_header_height().unwrap();
+					warn!("current_height ({})", current_height);
 					if let Some(fastsync_header) = fastsync_headers.get(&(current_height + 1)) {
 						let headers = fastsync_header.headers.clone();
 						let peer_info = fastsync_header.peer_info.clone();

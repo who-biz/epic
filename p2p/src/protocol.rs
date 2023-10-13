@@ -215,7 +215,7 @@ impl MessageHandler for Protocol {
 			Type::GetHeaders => {
 				// load headers from the locator
 				let loc: Locator = msg.body()?;
-				let offset = 0 as u8;
+				let offset = 0;
 				let headers = adapter.locate_headers(&loc.hashes, &offset)?;
 				let len = headers.len();
 				// serialize and send all the headers over

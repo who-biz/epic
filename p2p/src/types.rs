@@ -586,7 +586,7 @@ pub trait ChainAdapter: Sync + Send {
 	fn locate_headers(
 		&self,
 		locator: &[Hash],
-		offset: &u8,
+		offset: &u64,
 	) -> Result<Vec<core::BlockHeader>, chain::Error>;
 
 	/// Gets a full block by its hash.

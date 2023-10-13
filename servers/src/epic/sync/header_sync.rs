@@ -30,7 +30,7 @@ pub struct HeaderSync {
 	header_head_height: u64,
 	highest_height: u64,
 	syncing_peer: bool,
-	offset: u8,
+	offset: u64,
 	start_time: i64,
 }
 
@@ -42,7 +42,7 @@ impl HeaderSync {
 		chain: Arc<chain::Chain>,
 		header_head_height: u64,
 		highest_height: u64,
-		offset: u8,
+		offset: u64,
 	) -> HeaderSync {
 		HeaderSync {
 			sync_state,
@@ -57,7 +57,7 @@ impl HeaderSync {
 			start_time: Utc::now().timestamp(),
 		}
 	}
-	pub fn offset(&self) -> u8 {
+	pub fn offset(&self) -> u64 {
 		self.offset
 	}
 
@@ -95,7 +95,15 @@ impl HeaderSync {
 		} else {
 			peer_blocks = self.header_sync_due();
 		}
-		Ok((self.peer.info.get_headers().clone(), peer_blocks))
+
+		//remove headers that are lower than our current height.
+		let mut clean_headers: Vec<_> = self.peer.info.get_headers().clone();
+		//		warn!("unclean headers {:?}", clean_headers);
+		clean_headers.retain(|x| x.height >= self.header_head_height);
+		//		warn!("clean headers {:?}", clean_headers);
+		warn!("self.header_head_height ({})", self.header_head_height);
+
+		Ok((clean_headers, peer_blocks))
 	}
 
 	fn header_sync_due(&mut self) -> bool {

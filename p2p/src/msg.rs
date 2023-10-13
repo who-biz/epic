@@ -539,7 +539,7 @@ pub struct Locator {
 #[derive(Debug)]
 pub struct LocatorFastSync {
 	pub hashes: Vec<Hash>,
-	pub offset: u8,
+	pub offset: u64,
 }
 
 impl Writeable for Locator {
@@ -588,7 +588,7 @@ impl Readable for LocatorFastSync {
 		for _ in 0..len {
 			hashes.push(Hash::read(reader)?);
 		}
-		let offset = reader.read_u8()?;
+		let offset = reader.read_u64()?;
 		Ok(LocatorFastSync { hashes, offset })
 	}
 }

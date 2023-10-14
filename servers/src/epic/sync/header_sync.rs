@@ -96,6 +96,12 @@ impl HeaderSync {
 			peer_blocks = self.header_sync_due();
 		}
 		Ok((self.peer.info.get_headers().clone(), peer_blocks))
+
+		//remove headers that are lower than our current height.
+		//let mut clean_headers: Vec<_> = self.peer.info.get_headers().clone();
+		//clean_headers.retain(|x| x.height >= self.header_head_height);
+
+		//Ok((clean_headers, peer_blocks))
 	}
 
 	fn header_sync_due(&mut self) -> bool {
@@ -158,6 +164,7 @@ impl HeaderSync {
 	/// start getting headers back from a peer.
 	fn get_locator(&mut self) -> Result<Vec<Hash>, Error> {
 		let tip = self.chain.get_sync_head()?;
+		warn!("tip.height({})", tip.height);
 		let heights = get_locator_heights(tip.height);
 
 		// for security, clear history_locator[] in any case of header chain rollback,

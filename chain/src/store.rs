@@ -108,6 +108,12 @@ impl ChainStore {
 		self.db.exists(&to_key(BLOCK_PREFIX, &mut h.to_vec()))
 	}
 
+	/// Does this block header exist?
+	pub fn block_header_exists(&self, h: &Hash) -> Result<bool, Error> {
+		self.db
+			.exists(&to_key(BLOCK_HEADER_PREFIX, &mut h.to_vec()))
+	}
+
 	/// Get block_sums for the block hash.
 	pub fn get_block_sums(&self, h: &Hash) -> Result<BlockSums, Error> {
 		option_to_not_found(
@@ -231,6 +237,12 @@ impl<'a> Batch<'a> {
 	/// Does the block exist?
 	pub fn block_exists(&self, h: &Hash) -> Result<bool, Error> {
 		self.db.exists(&to_key(BLOCK_PREFIX, &mut h.to_vec()))
+	}
+
+	/// Does the block header exist?
+	pub fn block_header_exists(&self, h: &Hash) -> Result<bool, Error> {
+		self.db
+			.exists(&to_key(BLOCK_HEADER_PREFIX, &mut h.to_vec()))
 	}
 
 	/// Save the block to the db.

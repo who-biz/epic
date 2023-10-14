@@ -296,6 +296,7 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		bhs: &[core::BlockHeader],
 		peer_info: &PeerInfo,
 	) -> Result<bool, chain::Error> {
+		warn!("headers_received called!");
 		if bhs.len() == 0 {
 			//peer is banned
 			return Ok(false);

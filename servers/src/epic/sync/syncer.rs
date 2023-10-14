@@ -31,6 +31,8 @@ use crate::util::StopState;
 use crate::core::core::BlockHeader;
 use crate::p2p::PeerInfo;
 use std::collections::HashMap;
+
+#[derive(Clone)]
 pub struct FastsyncHeaderQueue {
 	offset: u8,
 	peer_info: PeerInfo,
@@ -323,12 +325,15 @@ impl SyncRunner {
 
 			if header_syncs.len() > 0 {
 				download_headers = false;
-
 				// just for stats
-				if let Ok(fastsync_headers) = fastsync_header_queue.try_lock() {
+				if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
 					info!("------------ Downloaded headers in queue ------------");
 
-					let mut sorted: Vec<_> = fastsync_headers.iter().collect();
+					let mut sorted: Vec<_> = fastsync_headers
+						.clone()
+						.into_iter()
+						.collect::<Vec<_>>()
+						.clone();
 					sorted.sort_by_key(|a| a.0);
 					for (key, value) in sorted.iter() {
 						info!(
@@ -338,11 +343,12 @@ impl SyncRunner {
 							value.offset
 						);
 					}
-					drop(fastsync_headers);
+					let lowest_height = sorted.iter().next().clone().unwrap().0;
+					drop(sorted);
 					info!("------------------ <-------------> ------------------");
-				}
+					//}
 
-				if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
+					//if let Ok(mut fastsync_headers) = fastsync_header_queue.try_lock() {
 					//reset if all queue items are processed or get stuck because items in queue can not be added
 					if fastsync_headers.len() == 0 || tochain_attemps > 10 {
 						download_headers = true;
@@ -355,7 +361,8 @@ impl SyncRunner {
 					}
 
 					let current_height = chainsync.adapter.total_header_height().unwrap();
-					if let Some(fastsync_header) = fastsync_headers.get(&(current_height + 1)) {
+					warn!("current_height = {}", current_height);
+					if let fastsync_header = fastsync_headers.iter().next().unwrap().1 {
 						let headers = fastsync_header.headers.clone();
 						let peer_info = fastsync_header.peer_info.clone();
 
@@ -382,7 +389,9 @@ impl SyncRunner {
 										})
 										.unwrap();
 								}
-								fastsync_headers.remove(&(current_height + 1));
+								//								drop(sorted);
+								//		sorted.remove(0);
+								fastsync_headers.remove(&lowest_height);
 							}
 							Err(err) => {
 								error!("chainsync {:?}", err);
@@ -391,6 +400,7 @@ impl SyncRunner {
 					} else {
 						tochain_attemps += 1;
 					}
+					//}
 					//end if fastsync_header
 				}
 			}

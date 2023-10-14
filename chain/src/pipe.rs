@@ -196,6 +196,8 @@ pub fn sync_block_headers(
 	// If they *do* increase total work then we should process them to update sync_head.
 	let sync_head = ctx.batch.get_sync_head()?;
 
+	warn!("sync_head = {:?}", sync_head.height);
+
 	if let Ok(existing) = ctx.batch.get_block_header(&last_header.hash()) {
 		if !has_more_work(&existing, &sync_head) {
 			return Ok(());
@@ -206,6 +208,11 @@ pub fn sync_block_headers(
 	// Note: This batch may be rolled back later if the MMR does not validate successfully.
 	for header in headers {
 		validate_header(header, ctx)?;
+		if let Ok(exists) = ctx.batch.block_header_exists(&header.hash()) {
+			if exists {
+				continue;
+			}
+		}
 		add_block_header(header, &ctx.batch)?;
 	}
 

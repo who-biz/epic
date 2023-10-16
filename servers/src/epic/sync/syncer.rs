@@ -356,13 +356,13 @@ impl SyncRunner {
 						continue;
 					}
 
-					//drop(fastsync_headers);
 					let lowest_height = sorted.iter().next().clone().unwrap().0;
 					let current_height = chainsync.adapter.total_header_height().unwrap();
-					warn!("current_height = {}", current_height);
+					//warn!("current_height({}), lowest_height in fastsync_headers({})", current_height, lowest_height);
 
 					let fastsync_header = sorted.get(0);
 					let headers = &fastsync_header.unwrap().1.headers;
+					//warn!("first header height ({}), hash({:?})", headers[0].height, headers[0].hash());
 					let peer_info = &fastsync_header.unwrap().1.peer_info;
 
 					match chainsync
@@ -388,8 +388,6 @@ impl SyncRunner {
 									})
 									.unwrap();
 							}
-							sorted.remove(0);
-							drop(sorted);
 							fastsync_headers.remove(&lowest_height);
 						}
 						Err(err) => {

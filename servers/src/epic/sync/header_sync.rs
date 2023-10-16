@@ -164,7 +164,7 @@ impl HeaderSync {
 	/// start getting headers back from a peer.
 	fn get_locator(&mut self) -> Result<Vec<Hash>, Error> {
 		let tip = self.chain.get_sync_head()?;
-		warn!("tip.height({})", tip.height);
+		//warn!("tip.height({})", tip.height);
 		let heights = get_locator_heights(tip.height);
 
 		// for security, clear history_locator[] in any case of header chain rollback,

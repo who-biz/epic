@@ -208,11 +208,11 @@ pub fn sync_block_headers(
 	// Note: This batch may be rolled back later if the MMR does not validate successfully.
 	for header in headers {
 		validate_header(header, ctx)?;
-		if let Ok(exists) = ctx.batch.block_header_exists(&header.hash()) {
+		/*if let Ok(exists) = ctx.batch.block_header_exists(&header.hash()) {
 			if exists {
 				continue;
 			}
-		}
+		}*/
 		add_block_header(header, &ctx.batch)?;
 	}
 

@@ -28,11 +28,14 @@ use crate::store;
 use crate::store::BottleIter;
 use crate::txhashset;
 use crate::types::{CommitPos, Options, Tip};
+use crate::util::Mutex;
 use chrono::prelude::Utc;
 use chrono::Duration;
 use epic_store;
-//use std::sync::Arc;
-//use crate::util::RwLock;
+use std::collections::HashSet;
+use std::sync::Arc;
+
+const MAX_POW_CACHE_SIZE: usize = 1_024;
 
 /// Contextual information required to process a new block and either reject or
 /// accept it.
@@ -41,12 +44,31 @@ pub struct BlockContext<'a> {
     pub opts: Options,
     /// The pow verifier to use when processing a block.
     pub pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
+    /// Exact header inputs whose proof of work has been verified successfully.
+    pub(crate) verified_pow: Arc<Mutex<HashSet<(Hash, Hash)>>>,
     /// The active txhashset (rewindable MMRs) to use for block processing.
     pub txhashset: &'a mut txhashset::TxHashSet,
     /// The active header MMR handle.
     pub header_pmmr: &'a mut txhashset::PMMRHandle<BlockHeader>,
     /// The active batch to use for block processing.
     pub batch: store::Batch<'a>,
+}
+
+fn verify_pow(header: &BlockHeader, ctx: &BlockContext<'_>) -> Result<(), pow::Error> {
+    // The advertised block hash does not cover every pre-PoW field, so both
+    // digests are required to identify the exact verifier input.
+    let key = (header.hash(), header.pre_pow().hash());
+    let mut cache = ctx.verified_pow.lock();
+    if cache.contains(&key) {
+        return Ok(());
+    }
+
+    (ctx.pow_verifier)(header)?;
+    if cache.len() >= MAX_POW_CACHE_SIZE {
+        cache.clear();
+    }
+    cache.insert(key);
+    Ok(())
 }
 
 // Check if we already know about this block for various reasons
@@ -67,7 +89,7 @@ fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result
     if !header.pow.is_primary() && !header.pow.is_secondary() {
         return Err(Error::LowEdgebits.into());
     }
-    if (ctx.pow_verifier)(header).is_err() {
+    if verify_pow(header, ctx).is_err() {
         error!(
             "pipe: error validating header with cuckoo edge_bits {}",
             header.pow.edge_bits(),
@@ -362,7 +384,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
         }
 
         let edge_bits = header.pow.edge_bits();
-        if !(ctx.pow_verifier)(header).is_ok() {
+        if verify_pow(header, ctx).is_err() {
             match header.pow.proof {
                 pow::Proof::RandomXProof { ref hash } => {
                     error!("pipe: error validating header with randomx hash {:?}", hash);

@@ -35,9 +35,9 @@ use crate::types::{
 	TxHashsetWriteStatus,
 };
 use crate::util::secp::pedersen::{Commitment, RangeProof};
-use crate::util::RwLock;
+use crate::util::{Mutex, RwLock};
 use epic_store::Error::NotFoundErr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -163,6 +163,7 @@ pub struct Chain {
 	sync_pmmr: Arc<RwLock<txhashset::PMMRHandle<BlockHeader>>>,
 	// POW verification function
 	pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
+	verified_pow: Arc<Mutex<HashSet<(Hash, Hash)>>>,
 	archive_mode: bool,
 	genesis: BlockHeader,
 }
@@ -226,6 +227,7 @@ impl Chain {
 			header_pmmr: Arc::new(RwLock::new(header_pmmr)),
 			sync_pmmr: Arc::new(RwLock::new(sync_pmmr)),
 			pow_verifier,
+			verified_pow: Arc::new(Mutex::new(HashSet::new())),
 			archive_mode,
 			genesis: genesis.header.clone(),
 		};
@@ -509,6 +511,7 @@ impl Chain {
 		Ok(pipe::BlockContext {
 			opts,
 			pow_verifier: self.pow_verifier,
+			verified_pow: self.verified_pow.clone(),
 			header_pmmr,
 			txhashset,
 			batch,

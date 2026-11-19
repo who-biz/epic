@@ -31,8 +31,40 @@ use epic_core as core;
 use epic_core::core::hash::Hashed;
 use epic_keychain as keychain;
 use epic_util as util;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
 mod chain_test_helper;
+
+static POW_VERIFICATIONS: AtomicUsize = AtomicUsize::new(0);
+static REJECT_POW: AtomicBool = AtomicBool::new(false);
+
+fn counting_pow_verifier(_header: &core::core::BlockHeader) -> Result<(), pow::Error> {
+	POW_VERIFICATIONS.fetch_add(1, Ordering::SeqCst);
+	if REJECT_POW.load(Ordering::SeqCst) {
+		Err(pow::Error::Verification("rejected by test verifier".into()))
+	} else {
+		Ok(())
+	}
+}
+
+fn process_concurrently(chain: &Arc<chain::Chain>, block: &core::core::Block) {
+	let barrier = Arc::new(Barrier::new(8));
+	let handles: Vec<_> = (0..8)
+		.map(|_| {
+			let chain = chain.clone();
+			let block = block.clone();
+			let barrier = barrier.clone();
+			thread::spawn(move || {
+				barrier.wait();
+				assert!(chain.process_block(block, chain::Options::NONE).is_err());
+			})
+		})
+		.collect();
+	for handle in handles {
+		handle.join().unwrap();
+	}
+}
 
 #[test]
 fn mine_empty_chain() {
@@ -49,6 +81,90 @@ fn mine_empty_chain() {
 	assert_eq!(head.height, 0, "Chain head should be at genesis (height 0)");
 
 	clean_output_dir(chain_dir);
+}
+
+#[test]
+fn concurrent_same_hash_blocks_verify_pow_once() {
+	let chain_dir = ".epic.concurrent_same_hash";
+	clean_output_dir(chain_dir);
+	set_foundation_path_for_test("foundation_floonet.json");
+
+	let genesis = pow::mine_genesis_block().unwrap();
+	let chain = Arc::new(
+		chain::Chain::init(
+			chain_dir.to_string(),
+			Arc::new(chain::types::NoopAdapter {}),
+			genesis,
+			counting_pow_verifier,
+			false,
+		)
+		.unwrap(),
+	);
+	let keychain = ExtKeychain::from_random_seed(false).unwrap();
+	let block = prepare_block(&keychain, &chain.head_header().unwrap(), &chain, 1, vec![], 1);
+	let block = core::core::Block::with_header(block.header);
+	POW_VERIFICATIONS.store(0, Ordering::SeqCst);
+	REJECT_POW.store(false, Ordering::SeqCst);
+
+	process_concurrently(&chain, &block);
+	assert_eq!(POW_VERIFICATIONS.load(Ordering::SeqCst), 1);
+	let mut altered_header = block.header.clone();
+	altered_header.timestamp = altered_header.timestamp + chrono::Duration::seconds(1);
+	assert_eq!(altered_header.hash(), block.header.hash());
+	assert!(chain
+		.process_block(
+			core::core::Block::with_header(altered_header),
+			chain::Options::NONE,
+		)
+		.is_err());
+	assert_eq!(POW_VERIFICATIONS.load(Ordering::SeqCst), 2);
+
+	let mut invalid_header = block.header.clone();
+	invalid_header.pow.nonce += 1;
+	assert_eq!(invalid_header.hash(), block.header.hash());
+	let invalid_block = core::core::Block::with_header(invalid_header);
+	REJECT_POW.store(true, Ordering::SeqCst);
+	assert!(chain
+		.process_block(invalid_block.clone(), chain::Options::NONE)
+		.is_err());
+	assert!(chain
+		.process_block(invalid_block, chain::Options::NONE)
+		.is_err());
+	assert_eq!(POW_VERIFICATIONS.load(Ordering::SeqCst), 4);
+	REJECT_POW.store(false, Ordering::SeqCst);
+	clean_output_dir(chain_dir);
+
+	let skipped_chain_dir = ".epic.skipped_pow_cache";
+	clean_output_dir(skipped_chain_dir);
+	let genesis = pow::mine_genesis_block().unwrap();
+	let skipped_chain = chain::Chain::init(
+		skipped_chain_dir.to_string(),
+		Arc::new(chain::types::NoopAdapter {}),
+		genesis,
+		counting_pow_verifier,
+		false,
+	)
+	.unwrap();
+	let block = prepare_block(
+		&keychain,
+		&skipped_chain.head_header().unwrap(),
+		&skipped_chain,
+		1,
+		vec![],
+		1,
+	);
+	POW_VERIFICATIONS.store(0, Ordering::SeqCst);
+	skipped_chain
+		.process_block_header(&block.header, chain::Options::SKIP_POW)
+		.unwrap();
+	assert!(skipped_chain
+		.process_block(
+			core::core::Block::with_header(block.header),
+			chain::Options::NONE,
+		)
+		.is_err());
+	assert_eq!(POW_VERIFICATIONS.load(Ordering::SeqCst), 1);
+	clean_output_dir(skipped_chain_dir);
 }
 
 #[test]

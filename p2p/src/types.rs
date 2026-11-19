@@ -761,6 +761,9 @@ pub trait ChainAdapter: Sync + Send {
 	// In p2p::ChainAdapter trait (probably in p2p/src/types.rs or similar)
 	fn sync_status(&self) -> SyncStatus;
 
+	/// Retry or expire outstanding compact-block requests.
+	fn check_compact_block_requests(&self) {}
+
 	/// A valid transaction has been received from one of our peers
 	fn transaction_received(
 		&self,

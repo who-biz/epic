@@ -21,7 +21,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration as StdDuration, Instant};
 
 use crate::chain::{self, BlockStatus, ChainAdapter, Options, SyncState, SyncStatus};
 use crate::common::hooks::{ChainEvents, NetEvents};
@@ -38,7 +38,7 @@ use crate::util::OneTime;
 use chrono::prelude::*;
 use chrono::Duration;
 use rand::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 /// Force full pow verification this many blocks from chaintip
@@ -85,6 +85,198 @@ pub const BLOCK_BROADCAST_IGNORE_THRESHOLD: u64 = 200;
 /// this many blocks from chaintip, while syncing
 pub const HEADER_BROADCAST_IGNORE_THRESHOLD: u64 = 200;
 
+const COMPACT_REQUEST_TIMEOUT: StdDuration = StdDuration::from_secs(10);
+const COMPACT_REQUEST_LIFETIME: StdDuration = StdDuration::from_secs(120);
+const MAX_COMPACT_REQUESTS: usize = 1_024;
+const MAX_COMPACT_REQUEST_CANDIDATES: usize = 32;
+
+type CompactRequestKey = (Hash, Hash);
+
+fn compact_request_key(header: &BlockHeader) -> CompactRequestKey {
+	(header.hash(), header.pre_pow().hash())
+}
+
+#[derive(Debug, PartialEq)]
+enum CompactAnnouncement {
+	Validate,
+	Request(p2p::PeerAddr),
+	Ignore,
+}
+
+struct CompactRequest {
+	candidates: VecDeque<p2p::PeerAddr>,
+	tried: HashSet<p2p::PeerAddr>,
+	selected: Option<(p2p::PeerAddr, Instant)>,
+	validating: bool,
+	processing: bool,
+	created: Instant,
+}
+
+struct CompactRequestTracker {
+	requests: HashMap<CompactRequestKey, CompactRequest>,
+}
+
+impl CompactRequestTracker {
+	fn new() -> Self {
+		Self {
+			requests: HashMap::with_capacity(MAX_COMPACT_REQUESTS),
+		}
+	}
+
+	fn cleanup(&mut self, now: Instant) {
+		self.requests.retain(|_, request| {
+			request.processing || now.duration_since(request.created) < COMPACT_REQUEST_LIFETIME
+		});
+	}
+
+	fn select_next(request: &mut CompactRequest, now: Instant) -> Option<p2p::PeerAddr> {
+		while let Some(peer) = request.candidates.pop_front() {
+			if request.tried.insert(peer) {
+				request.selected = Some((peer, now));
+				return Some(peer);
+			}
+		}
+		None
+	}
+
+	fn announce(
+		&mut self,
+		key: CompactRequestKey,
+		peer: p2p::PeerAddr,
+		now: Instant,
+	) -> CompactAnnouncement {
+		self.cleanup(now);
+		if let Some(request) = self.requests.get_mut(&key) {
+			if !request.tried.contains(&peer)
+				&& !request.candidates.contains(&peer)
+				&& request.candidates.len() < MAX_COMPACT_REQUEST_CANDIDATES
+			{
+				request.candidates.push_back(peer);
+			}
+			if !request.validating && !request.processing {
+				if request
+					.selected
+					.map_or(false, |(_, requested)| now.duration_since(requested) >= COMPACT_REQUEST_TIMEOUT)
+				{
+					request.selected = None;
+				}
+				if request.selected.is_none() {
+					return Self::select_next(request, now)
+						.map_or(CompactAnnouncement::Ignore, CompactAnnouncement::Request);
+				}
+			}
+			return CompactAnnouncement::Ignore;
+		}
+
+		if self.requests.len() >= MAX_COMPACT_REQUESTS {
+			if let Some(oldest) = self
+				.requests
+				.iter()
+				.filter(|(_, request)| !request.processing)
+				.min_by_key(|(_, request)| request.created)
+				.map(|(key, _)| *key)
+			{
+				self.requests.remove(&oldest);
+			} else {
+				return CompactAnnouncement::Ignore;
+			}
+		}
+
+		self.requests.insert(
+			key,
+			CompactRequest {
+				candidates: VecDeque::from([peer]),
+				tried: HashSet::new(),
+				selected: None,
+				validating: true,
+				processing: false,
+				created: now,
+			},
+		);
+		CompactAnnouncement::Validate
+	}
+
+	fn validated(&mut self, key: CompactRequestKey, now: Instant) -> Option<p2p::PeerAddr> {
+		let request = self.requests.get_mut(&key)?;
+		request.validating = false;
+		Self::select_next(request, now)
+	}
+
+	fn validation_failed(&mut self, key: CompactRequestKey) {
+		self.requests.remove(&key);
+	}
+
+	fn begin_response(&mut self, key: CompactRequestKey, peer: p2p::PeerAddr) -> bool {
+		if let Some(request) = self.requests.get_mut(&key) {
+			if request.selected.map(|(selected, _)| selected) == Some(peer) && !request.processing {
+				request.processing = true;
+				return true;
+			}
+		}
+		false
+	}
+
+	fn selected_failed(
+		&mut self,
+		key: CompactRequestKey,
+		peer: p2p::PeerAddr,
+		now: Instant,
+	) -> Option<p2p::PeerAddr> {
+		let request = self.requests.get_mut(&key)?;
+		if request.selected.map(|(selected, _)| selected) != Some(peer) {
+			return None;
+		}
+		request.processing = false;
+		request.selected = None;
+		Self::select_next(request, now)
+	}
+
+	fn complete(&mut self, key: CompactRequestKey) {
+		self.requests.remove(&key);
+	}
+
+	fn remove_hash(&mut self, hash: Hash) {
+		self.requests.retain(|(request_hash, _), _| *request_hash != hash);
+	}
+
+	fn clear(&mut self) {
+		self.requests.clear();
+	}
+
+	fn maintain<F>(
+		&mut self,
+		now: Instant,
+		mut connected: F,
+	) -> Vec<(CompactRequestKey, p2p::PeerAddr)>
+	where
+		F: FnMut(p2p::PeerAddr) -> bool,
+	{
+		self.cleanup(now);
+		let mut requests = vec![];
+		for (key, request) in &mut self.requests {
+			if request.validating || request.processing {
+				continue;
+			}
+			if request.selected.map_or(false, |(peer, requested)| {
+				!connected(peer) || now.duration_since(requested) >= COMPACT_REQUEST_TIMEOUT
+			}) {
+				request.selected = None;
+			}
+			while request.selected.is_none() {
+				match Self::select_next(request, now) {
+					Some(peer) if connected(peer) => {
+						requests.push((*key, peer));
+						break;
+					}
+					Some(_) => request.selected = None,
+					None => break,
+				}
+			}
+		}
+		requests
+	}
+}
+
 /// Implementation of the NetAdapter for the . Gets notified when new
 /// blocks and transactions are received and forwards to the chain and pool
 /// implementations.
@@ -99,7 +291,7 @@ where
 	peers: OneTime<Weak<p2p::Peers>>,
 	config: ServerConfig,
 	hooks: Vec<Box<dyn NetEvents + Send + Sync>>,
-	recently_seen_headers: Arc<Mutex<HashMap<Hash, HashMap<p2p::PeerAddr, Instant>>>>,
+	compact_block_requests: Arc<Mutex<CompactRequestTracker>>,
 }
 
 impl<B, P> p2p::ChainAdapter for NetToChainAdapter<B, P>
@@ -109,6 +301,22 @@ where
 {
 	fn sync_status(&self) -> SyncStatus {
 		self.sync_state.status()
+	}
+
+	fn check_compact_block_requests(&self) {
+		if self.sync_state.status() != SyncStatus::NoSync {
+			self.compact_block_requests.lock().unwrap().clear();
+			return;
+		}
+		let peers = self.peers();
+		let requests = self
+			.compact_block_requests
+			.lock()
+			.unwrap()
+			.maintain(Instant::now(), |peer| peers.is_connected(peer));
+		for (key, peer) in requests {
+			self.request_compact_block(key, peer);
+		}
 	}
 
 	fn total_difficulty(&self) -> Result<Difficulty, chain::Error> {
@@ -197,7 +405,9 @@ where
 			}
 		}
 
-		if self.chain().block_exists(b.hash())? {
+		let hash = b.hash();
+		if self.chain().block_exists(hash)? {
+			self.compact_block_requests.lock().unwrap().remove_hash(hash);
 			return Ok(true);
 		}
 		debug!(
@@ -209,7 +419,11 @@ where
 			b.outputs().len(),
 			b.kernels().len(),
 		);
-		self.process_block(b, peer_info, opts)
+		let result = self.process_block(b, peer_info, opts);
+		if self.chain().block_exists(hash).unwrap_or(false) {
+			self.compact_block_requests.lock().unwrap().remove_hash(hash);
+		}
+		result
 	}
 
 	fn compact_block_received(
@@ -234,115 +448,132 @@ where
 
 		// No need to process this compact block if we have previously accepted the _full block_.
 		if self.chain().block_exists(cb_hash)? {
+			self.compact_block_requests.lock().unwrap().remove_hash(cb_hash);
 			return Ok(true);
 		}
 
-		// strict "header first" propagation: only accept compact block from
-		// a peer that previously sent the corresponding header. We store a
-		// per-hash map of peers we've seen that header from and check for
-		// a matching entry for the current peer.
-		let seen_match = {
-			let seen = self.recently_seen_headers.lock().unwrap();
-			seen.get(&cb_hash).and_then(|m| m.get(&peer_info.addr).copied())
-		};
-		if seen_match.is_none() {
-			// Only accept the compact block from the peer that sent the header
+		let request_key = compact_request_key(&cb.header);
+		if !self
+			.compact_block_requests
+			.lock()
+			.unwrap()
+			.begin_response(request_key, peer_info.addr)
+		{
+			// Only the peer selected for this exact header may satisfy the request.
 			return Ok(true);
 		}
 
-		debug!(
-			"Received compact_block {} at {} from {} [out/kern/kern_ids: {}/{}/{}] going to process.",
-			cb_hash.clone(),
-			cb.header.height,
-			peer_info.addr,
-			cb.out_full().len(),
-			cb.kern_full().len(),
-			cb.kern_ids().len(),
-		);
-
-		if cb.kern_ids().is_empty() {
-			// push the freshly hydrated block through the chain pipeline
-			match core::Block::hydrate_from(cb, vec![]) {
-				Ok(block) => {
-					if !self.sync_state.is_syncing() {
-						for hook in &self.hooks {
-							let _ = hook.on_block_received(&block, &peer_info.addr);
-						}
-					}
-					self.process_block(block, peer_info, chain::Options::NONE)
-				}
-				Err(e) => {
-					debug!("Invalid hydrated block {}: {:?}", cb_hash, e);
-					return Ok(false);
-				}
-			}
-		} else {
-			// check at least the header is valid before hydrating
-			if let Err(e) = self
-				.chain()
-				.process_block_header(&cb.header, chain::Options::NONE)
-			{
-				debug!("Invalid compact block header {}: {:?}", cb_hash, e);
-				return Ok(!e.is_bad_data());
-			}
-			peer_info.update_validated_tip(
-				cb.header.height,
-				cb.header.total_difficulty(),
-				cb.header.hash(),
-			);
-
-			let (txs, missing_short_ids) = {
-				self.tx_pool
-					.read()
-					.retrieve_transactions(cb.hash(), cb.nonce, cb.kern_ids())
-			};
-
+		let result = (|| -> Result<bool, chain::Error> {
 			debug!(
-				"compact_block_received: txs from tx pool - {}, (unknown kern_ids: {})",
-				txs.len(),
-				missing_short_ids.len(),
+				"Received compact_block {} at {} from {} [out/kern/kern_ids: {}/{}/{}] going to process.",
+				cb_hash.clone(),
+				cb.header.height,
+				peer_info.addr,
+				cb.out_full().len(),
+				cb.kern_full().len(),
+				cb.kern_ids().len(),
 			);
 
-			// If we have missing kernels then we know we cannot hydrate this compact block.
-			if missing_short_ids.len() > 0 {
-				self.request_block(&cb.header, peer_info, chain::Options::NONE);
-				return Ok(true);
-			}
-
-			let block = match core::Block::hydrate_from(cb.clone(), txs) {
-				Ok(block) => {
-					if !self.sync_state.is_syncing() {
-						for hook in &self.hooks {
-							let _ = hook.on_block_received(&block, &peer_info.addr);
+			if cb.kern_ids().is_empty() {
+				// push the freshly hydrated block through the chain pipeline
+				match core::Block::hydrate_from(cb, vec![]) {
+					Ok(block) => {
+						if !self.sync_state.is_syncing() {
+							for hook in &self.hooks {
+								let _ = hook.on_block_received(&block, &peer_info.addr);
+							}
 						}
+						self.process_block(block, peer_info, chain::Options::NONE)
 					}
-					block
-				}
-				Err(e) => {
-					debug!("Invalid hydrated block {}: {:?}", cb.hash(), e);
-					return Ok(false);
-				}
-			};
-
-			if let Ok(prev) = self.chain().get_previous_header(&cb.header) {
-				if block.validate(&prev.total_kernel_offset).is_ok() {
-					debug!("successfully hydrated block from tx pool!");
-					self.process_block(block, peer_info, chain::Options::NONE)
-				} else {
-					if self.sync_state.status() == SyncStatus::NoSync {
-						debug!("adapter: block invalid after hydration, requesting full block");
-						self.request_block(&cb.header, peer_info, chain::Options::NONE);
-						Ok(true)
-					} else {
-						debug!("block invalid after hydration, ignoring it, cause still syncing");
-						Ok(true)
+					Err(e) => {
+						debug!("Invalid hydrated block {}: {:?}", cb_hash, e);
+						Ok(false)
 					}
 				}
 			} else {
-				debug!("failed to retrieve previous block header (still syncing?)");
-				Ok(true)
+				// check at least the header is valid before hydrating
+				if let Err(e) = self
+					.chain()
+					.process_block_header(&cb.header, chain::Options::NONE)
+				{
+					debug!("Invalid compact block header {}: {:?}", cb_hash, e);
+					return Ok(!e.is_bad_data());
+				}
+				peer_info.update_validated_tip(
+					cb.header.height,
+					cb.header.total_difficulty(),
+					cb.header.hash(),
+				);
+
+				let (txs, missing_short_ids) = {
+					self.tx_pool
+						.read()
+						.retrieve_transactions(cb.hash(), cb.nonce, cb.kern_ids())
+				};
+
+				debug!(
+					"compact_block_received: txs from tx pool - {}, (unknown kern_ids: {})",
+					txs.len(),
+					missing_short_ids.len(),
+				);
+
+				// If we have missing kernels then we know we cannot hydrate this compact block.
+				if missing_short_ids.len() > 0 {
+					self.request_block(&cb.header, peer_info, chain::Options::NONE);
+					return Ok(true);
+				}
+
+				let block = match core::Block::hydrate_from(cb.clone(), txs) {
+					Ok(block) => {
+						if !self.sync_state.is_syncing() {
+							for hook in &self.hooks {
+								let _ = hook.on_block_received(&block, &peer_info.addr);
+							}
+						}
+						block
+					}
+					Err(e) => {
+						debug!("Invalid hydrated block {}: {:?}", cb.hash(), e);
+						return Ok(false);
+					}
+				};
+
+				if let Ok(prev) = self.chain().get_previous_header(&cb.header) {
+					if block.validate(&prev.total_kernel_offset).is_ok() {
+						debug!("successfully hydrated block from tx pool!");
+						self.process_block(block, peer_info, chain::Options::NONE)
+					} else {
+						if self.sync_state.status() == SyncStatus::NoSync {
+							debug!("adapter: block invalid after hydration, requesting full block");
+							self.request_block(&cb.header, peer_info, chain::Options::NONE);
+							Ok(true)
+						} else {
+							debug!("block invalid after hydration, ignoring it, cause still syncing");
+							Ok(true)
+						}
+					}
+				} else {
+					debug!("failed to retrieve previous block header (still syncing?)");
+					Ok(true)
+				}
 			}
+		})();
+
+		let retry = match &result {
+			Ok(true) => {
+				self.compact_block_requests.lock().unwrap().complete(request_key);
+				None
+			}
+			Ok(false) | Err(_) => self
+				.compact_block_requests
+				.lock()
+				.unwrap()
+				.selected_failed(request_key, peer_info.addr, Instant::now()),
+		};
+		if let Some(peer) = retry {
+			self.request_compact_block(request_key, peer);
 		}
+		result
 	}
 
 	fn header_received(
@@ -350,34 +581,36 @@ where
 		bh: core::BlockHeader,
 		peer_info: &PeerInfo,
 	) -> Result<bool, chain::Error> {
-		//keep new headers synced exept when in HeaderSync mode
+		// Keep new headers synced except when in HeaderSync mode.
 		if matches!(self.sync_state.status(), SyncStatus::HeaderSync { .. }) {
 			return Ok(true);
 		}
 
 		// No need to process this header if we have previously accepted the _full block_.
-		if self.chain().block_exists(bh.hash())? {
+		let hash = bh.hash();
+		if self.chain().block_exists(hash)? {
+			self.compact_block_requests.lock().unwrap().remove_hash(hash);
 			return Ok(true);
 		}
-		// Clean up old header entries
-		self.cleanup_recently_seen_headers(std::time::Duration::from_secs(120));
 
-		let hash = bh.hash();
-		{
-			let mut seen = self.recently_seen_headers.lock().unwrap();
-			// If we've already seen this header from this peer, drop early
-			if let Some(m) = seen.get(&hash) {
-				if m.contains_key(&peer_info.addr) {
+		let request_key = if self.sync_state.status() == SyncStatus::NoSync {
+			let key = compact_request_key(&bh);
+			let announcement = self
+				.compact_block_requests
+				.lock()
+				.unwrap()
+				.announce(key, peer_info.addr, Instant::now());
+			match announcement {
+				CompactAnnouncement::Validate => Some(key),
+				CompactAnnouncement::Request(peer) => {
+					self.request_compact_block(key, peer);
 					return Ok(true);
 				}
+				CompactAnnouncement::Ignore => return Ok(true),
 			}
-			// Avoid unbounded growth
-			if seen.len() > 10000 {
-				seen.clear();
-			}
-			// Record that this peer sent us this header
-			seen.entry(hash).or_insert_with(HashMap::new).insert(peer_info.addr, Instant::now());
-		}
+		} else {
+			None
+		};
 
 		if !self.sync_state.is_syncing() {
 			for hook in &self.hooks {
@@ -390,10 +623,8 @@ where
 		let res = self.chain().process_block_header(&bh, chain::Options::NONE);
 
 		if let Err(e) = res {
-			// if we got a bad data error, we can remove the header from the recently seen headers
-			{
-				let mut seen = self.recently_seen_headers.lock().unwrap();
-				seen.remove(&hash);
+			if let Some(key) = request_key {
+				self.compact_block_requests.lock().unwrap().validation_failed(key);
 			}
 
 			debug!("Block header {} refused by chain: {:?}", bh.hash(), e);
@@ -408,9 +639,16 @@ where
 
 		// we have successfully processed a block header
 		peer_info.update_validated_tip(bh.height, bh.total_difficulty(), bh.hash());
-		// so we can go request the block itself
-		// moved request for compact block to peers::header_received
-		//self.request_compact_block(&bh, peer_info);
+		if let Some(key) = request_key {
+			let peer = self
+				.compact_block_requests
+				.lock()
+				.unwrap()
+				.validated(key, Instant::now());
+			if let Some(peer) = peer {
+				self.request_compact_block(key, peer);
+			}
+		}
 
 		Ok(true)
 	}
@@ -655,9 +893,7 @@ where
 			peers: OneTime::new(),
 			config,
 			hooks,
-			recently_seen_headers: Arc::new(Mutex::new(
-				HashMap::<Hash, HashMap<p2p::PeerAddr, Instant>>::with_capacity(10_000),
-			)),
+			compact_block_requests: Arc::new(Mutex::new(CompactRequestTracker::new())),
 		}
 	}
 
@@ -848,15 +1084,45 @@ where
 		})
 	}
 
-	// After we have received a block header in "header first" propagation
-	// we need to go request the block (compact representation) from the
-	// same peer that gave us the header (unless we have already accepted the block)
-	// moved to peers::header_received
-	/*fn request_compact_block(&self, bh: &BlockHeader, peer_info: &PeerInfo) {
-		self.send_block_request_to_peer(bh.hash(), peer_info, |peer, h| {
-			peer.send_compact_block_request(h)
-		})
-	}*/
+	fn request_compact_block(&self, key: CompactRequestKey, mut peer_addr: p2p::PeerAddr) {
+		loop {
+			match self.chain().block_exists(key.0) {
+				Ok(true) => {
+					self.compact_block_requests.lock().unwrap().complete(key);
+					return;
+				}
+				Err(e) => {
+					error!("Failed to check compact block {} before request: {:?}", key.0, e);
+					return;
+				}
+				Ok(false) => {}
+			}
+
+			let sent = self
+				.peers()
+				.get_connected_peer(peer_addr)
+				.map_or(false, |peer| match peer.send_compact_block_request(key.0) {
+					Ok(_) => true,
+					Err(e) => {
+						debug!("Failed to request compact block {} from {}: {:?}", key.0, peer_addr, e);
+						false
+					}
+				});
+			if sent {
+				return;
+			}
+
+			let next = self
+				.compact_block_requests
+				.lock()
+				.unwrap()
+				.selected_failed(key, peer_addr, Instant::now());
+			match next {
+				Some(peer) => peer_addr = peer,
+				None => return,
+			}
+		}
+	}
 
 	fn send_tx_request_to_peer<F>(&self, h: Hash, peer_info: &PeerInfo, f: F)
 	where
@@ -899,15 +1165,6 @@ where
 		}
 	}
 
-	fn cleanup_recently_seen_headers(&self, timeout: std::time::Duration) {
-			let mut seen = self.recently_seen_headers.lock().unwrap();
-			let now = Instant::now();
-			// For each hash, remove peer entries older than timeout and drop empty maps
-			seen.retain(|_, peer_map| {
-				peer_map.retain(|_, timestamp| now.duration_since(*timestamp) < timeout);
-				!peer_map.is_empty()
-			});
-	}
 }
 
 /// Implementation of the ChainAdapter for the network. Gets notified when the
@@ -1164,6 +1421,91 @@ impl pool::BlockChain for PoolToChainAdapter {
 #[cfg(test)]
 mod test {
 	use super::*;
+
+	fn peer(port: u16) -> p2p::PeerAddr {
+		p2p::PeerAddr(format!("127.0.0.1:{}", port).parse().unwrap())
+	}
+
+	fn request_key(value: u64) -> CompactRequestKey {
+		(
+			Hash::from_vec(&value.to_le_bytes()),
+			Hash::from_vec(&value.wrapping_add(1).to_le_bytes()),
+		)
+	}
+
+	#[test]
+	fn compact_announcements_create_one_initial_request() {
+		let now = Instant::now();
+		let key = request_key(1);
+		let mut tracker = CompactRequestTracker::new();
+		assert_eq!(tracker.announce(key, peer(1), now), CompactAnnouncement::Validate);
+		for port in 2..10 {
+			assert_eq!(tracker.announce(key, peer(port), now), CompactAnnouncement::Ignore);
+		}
+		assert_eq!(tracker.validated(key, now), Some(peer(1)));
+		assert_eq!(tracker.announce(key, peer(10), now), CompactAnnouncement::Ignore);
+		assert_eq!(
+			tracker.announce((key.0, request_key(2).1), peer(10), now),
+			CompactAnnouncement::Validate
+		);
+	}
+
+	#[test]
+	fn compact_request_timeout_selects_one_fallback() {
+		let now = Instant::now();
+		let key = request_key(2);
+		let mut tracker = CompactRequestTracker::new();
+		assert_eq!(tracker.announce(key, peer(1), now), CompactAnnouncement::Validate);
+		assert_eq!(tracker.announce(key, peer(2), now), CompactAnnouncement::Ignore);
+		assert_eq!(tracker.announce(key, peer(3), now), CompactAnnouncement::Ignore);
+		assert_eq!(tracker.validated(key, now), Some(peer(1)));
+
+		let retry_at = now + COMPACT_REQUEST_TIMEOUT;
+		assert_eq!(tracker.maintain(retry_at, |_| true), vec![(key, peer(2))]);
+		assert!(tracker.maintain(retry_at, |_| true).is_empty());
+		assert_eq!(
+			tracker.maintain(retry_at + StdDuration::from_secs(1), |addr| addr != peer(2)),
+			vec![(key, peer(3))]
+		);
+	}
+
+	#[test]
+	fn compact_responses_have_one_processing_winner_and_invalid_fallback() {
+		let now = Instant::now();
+		let key = request_key(3);
+		let mut tracker = CompactRequestTracker::new();
+		assert_eq!(tracker.announce(key, peer(1), now), CompactAnnouncement::Validate);
+		assert_eq!(tracker.announce(key, peer(2), now), CompactAnnouncement::Ignore);
+		assert_eq!(tracker.validated(key, now), Some(peer(1)));
+		assert!(tracker.begin_response(key, peer(1)));
+		assert!(!tracker.begin_response(key, peer(1)));
+		assert!(!tracker.begin_response(key, peer(2)));
+		assert_eq!(tracker.selected_failed(key, peer(1), now), Some(peer(2)));
+		assert!(tracker.begin_response(key, peer(2)));
+		tracker.complete(key);
+		assert!(!tracker.begin_response(key, peer(2)));
+	}
+
+	#[test]
+	fn compact_request_state_is_bounded_and_expires() {
+		let now = Instant::now();
+		let mut tracker = CompactRequestTracker::new();
+		let key = request_key(9);
+		tracker.announce(key, peer(1), now);
+		for port in 2..100 {
+			tracker.announce(key, peer(port), now);
+		}
+		assert_eq!(
+			tracker.requests.get(&key).unwrap().candidates.len(),
+			MAX_COMPACT_REQUEST_CANDIDATES
+		);
+		for value in 0..MAX_COMPACT_REQUESTS + 100 {
+			tracker.announce(request_key(value as u64 + 10), peer(1), now);
+		}
+		assert_eq!(tracker.requests.len(), MAX_COMPACT_REQUESTS);
+		tracker.maintain(now + COMPACT_REQUEST_LIFETIME, |_| true);
+		assert!(tracker.requests.is_empty());
+	}
 
 	#[test]
 	fn forced_pow_threshold_saturates_below_window() {

@@ -415,6 +415,7 @@ impl Peers {
 	/// Ping all our connected peers. Always automatically expects a pong back
 	/// or disconnects. This acts as a liveness test.
 	pub fn check_all(&self, total_difficulty: Difficulty, height: u64) {
+		self.adapter.check_compact_block_requests();
 		for p in self.connected_peers().iter() {
 			if let Err(e) = p.send_ping(total_difficulty.clone(), height, Utc::now().timestamp()) {
 				warn!("Error pinging peer {}", &p.info.addr);
@@ -670,6 +671,10 @@ impl ChainAdapter for Peers {
 		self.adapter.sync_status()
 	}
 
+	fn check_compact_block_requests(&self) {
+		self.adapter.check_compact_block_requests()
+	}
+
 	fn tx_kernel_received(
 		&self,
 		kernel_hash: Hash,
@@ -743,7 +748,7 @@ impl ChainAdapter for Peers {
 		bh: core::BlockHeader,
 		peer_info: &PeerInfo,
 	) -> Result<bool, chain::Error> {
-		if !self.adapter.header_received(bh.clone(), peer_info)? {
+		if !self.adapter.header_received(bh, peer_info)? {
 			// if the peer sent us a block header that's intrinsically bad
 			// they are either mistaken or malevolent, both of which require a ban
 			self.ban_peer(peer_info.addr, ReasonForBan::BadBlockHeader)
@@ -754,19 +759,6 @@ impl ChainAdapter for Peers {
 				})?;
 			Ok(false)
 		} else {
-			// At the top of fn header_received in Peers:
-			if !matches!(self.adapter.sync_status(), SyncStatus::NoSync) {
-				return Ok(true);
-			}
-
-			// move from NetAdapter header_received here
-			// After we have received a block header in "header first" propagation
-			// we need to go request the block (compact representation) from the
-			// same peer that gave us the header (unless we have already accepted the block)
-			if let Some(peer) = self.get_connected_peer(peer_info.addr) {
-				let _ = peer.send_compact_block_request(bh.hash().clone());
-			}
-
 			Ok(true)
 		}
 	}

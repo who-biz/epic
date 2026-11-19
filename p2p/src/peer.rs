@@ -552,6 +552,10 @@ impl ChainAdapter for TrackingAdapter {
 		self.adapter.sync_status()
 	}
 
+	fn check_compact_block_requests(&self) {
+		self.adapter.check_compact_block_requests()
+	}
+
 	fn tx_kernel_received(
 		&self,
 		kernel_hash: Hash,
